@@ -1,0 +1,25 @@
+# Repo-local Codex config template for AgentLogViewer.
+# This project uses custom subagents defined under `.codex/agents/`.
+
+personality = "pragmatic"
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+
+[features]
+
+[projects.'\\?\C:\work\AgentLogViewer']
+trust_level = "trusted"
+
+[agents]
+max_threads = 12
+max_depth = 2
+job_max_runtime_seconds = 1800
+
+[plugins."github@openai-curated"]
+enabled = true
+
+[plugins."build-web-apps@openai-curated"]
+enabled = true
+
+[windows]
+sandbox = "elevated"

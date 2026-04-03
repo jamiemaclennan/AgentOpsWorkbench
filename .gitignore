@@ -1,0 +1,6 @@
+﻿node_modules/
+dist/
+.tmp/
+coverage/
+project-framework-bundle.zip
+agent-ops-workbench-bundle.zip

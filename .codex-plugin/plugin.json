@@ -1,0 +1,35 @@
+﻿{
+    "name":  "agent-ops-workbench",
+    "version":  "0.1.0",
+    "description":  "Reusable Codex workflow framework with observability-oriented delivery patterns.",
+    "author":  {
+                   "name":  "hey_j"
+               },
+    "license":  "Proprietary",
+    "keywords":  [
+                     "codex",
+                     "multiagent",
+                     "agent-ops",
+                     "backlog",
+                     "workflow",
+                     "observability"
+                 ],
+    "skills":  "./skills/",
+    "interface":  {
+                      "displayName":  "Agent Ops Workbench",
+                      "shortDescription":  "Workflow framework for agent-driven delivery",
+                      "longDescription":  "Reusable Codex workflow framework for backlog-driven execution, validation discipline, and observability-friendly review flows.",
+                      "developerName":  "hey_j",
+                      "category":  "Productivity",
+                      "capabilities":  [
+                                           "Interactive",
+                                           "Write"
+                                       ],
+                      "defaultPrompt":  [
+                                            "Apply the Agent Ops Workbench framework to this repo.",
+                                            "Normalize this repo to the compact Agent Ops Workbench layout.",
+                                            "Determine whether this repo should move from compact to zoned mode."
+                                        ],
+                      "brandColor":  "#2563EB"
+                  }
+}

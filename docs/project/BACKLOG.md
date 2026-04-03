@@ -1,0 +1,10 @@
+﻿# Project Backlog
+
+This file is the canonical cross-zone backlog for Agent Ops Workbench.
+
+| ID | Status | Owner Zone | Item | Write Scope | Depends On | Done When | Validation | Access | BOSS Signoff | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AOW-001 | done | docs | Define the repo-level zoned framework and product specs | `AGENTS.md`, `docs/project/*`, `docs/specs/*`, `agents/*` | None | The repo contains collaboration guidance, zoned project docs, and durable specs that describe the plugin and companion-viewer direction. | File review. | Open `AGENTS.md`, `docs/project/START_HERE.md`, and `docs/specs/PRODUCT_SPEC.md`. | no | Framework docs are now present. |
+| AOW-002 | done | plugin-core | Align plugin metadata, README, and skill naming | `.codex-plugin/plugin.json`, `README.md`, `skills/**` | AOW-001 | Plugin naming, prompts, and documentation consistently use Agent Ops Workbench language. | File review plus plugin-manifest inspection. | Open `.codex-plugin/plugin.json` and `README.md`. | no | Repo copy has been renamed and aligned. |
+| AOW-003 | done | app-viewer | Bundle AgentLogViewer into this repo and document the integration boundary | `apps/agent-log-viewer/**`, `docs/specs/*`, `docs/project/*`, `README.md` | AOW-001 | The repo contains the bundled viewer app and documents the intended boundary between the plugin and the companion UI. | File review of bundled app and docs. | Open `apps/agent-log-viewer/package.json`, `README.md`, and `docs/specs/CLIENT_SPEC.md`. | yes | Completed after explicit boss request to bundle the viewer into this repo. |
+| AOW-004 | in_progress | app-viewer | Continue the inherited in-progress AgentLogViewer work inside the bundled app | `apps/agent-log-viewer/**`, `docs/project/backlogs/app-viewer.md` | AOW-003 | The previously active bundled-viewer backlog items are preserved and remain trackable in this repo under their original `ALV-*` IDs. | Backlog review. | Open `docs/project/backlogs/app-viewer.md`. | no | Preserves `ALV-004`, `ALV-005`, and `ALV-006` as active inherited work. |
