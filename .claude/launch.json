@@ -1,0 +1,55 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "AgentOpsWorkbench — agent-log-viewer",
+      "cwd": "C:\\work\\AgentOpsWorkbench\\apps\\agent-log-viewer",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 4173
+    },
+    {
+      "name": "AgentLogViewer (standalone)",
+      "cwd": "C:\\work\\AgentLogViewer",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 4173,
+      "note": "Same port as AgentOpsWorkbench agent-log-viewer — only run one at a time"
+    },
+    {
+      "name": "hexbuckle — static server",
+      "cwd": "C:\\work\\hexboard\\hexbuckle",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "hexbuckle2 — web2d selector",
+      "cwd": "C:\\work\\hexbuckle2",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/clients/web-2d/dev-server.js", "--selector", "--port", "4313"],
+      "port": 4313
+    },
+    {
+      "name": "hexbuckle2 — hexplay slice",
+      "cwd": "C:\\work\\hexbuckle2",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/clients/web-2d/dev-server.js", "--scenario", "hexplay/first-slice", "--port", "4313"],
+      "port": 4313
+    },
+    {
+      "name": "hexbuckle2 — hexbuckle slice",
+      "cwd": "C:\\work\\hexbuckle2",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/clients/web-2d/dev-server.js", "--scenario", "hexbuckle/open-ground-orders", "--port", "4313"],
+      "port": 4313
+    },
+    {
+      "name": "MultiTacToe — web client",
+      "cwd": "C:\\work\\MultiTacToe",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/serve-client.js"],
+      "port": 3000
+    }
+  ]
+}

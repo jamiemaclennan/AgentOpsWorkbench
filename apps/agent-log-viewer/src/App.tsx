@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchFileContent, fetchProjectDetail, fetchProjects } from './api';
 import type {
@@ -252,6 +252,10 @@ export default function App() {
     setLogGrouping('item');
   }
 
+  function handleBoardValidationChange(storageKey: string, fingerprint: string, validated: boolean) {
+    setValidatedItems((current) => updateValidatedItems(current, storageKey, fingerprint, validated));
+  }
+
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const blockedReasons = createBlockedReasonMap(projectDetail?.logs ?? []);
   const bossHandoffs = createBossHandoffMap(projectDetail?.logs ?? []);
@@ -357,7 +361,13 @@ export default function App() {
               </button>
             </div>
             {projectDetail && projectDetail.project.id === boardProjectId ? (
-              <BacklogBoard items={projectDetail.backlogItems} />
+              <BacklogBoard
+                items={projectDetail.backlogItems}
+                projectId={projectDetail.project.id}
+                bossHandoffs={bossHandoffs}
+                validatedItems={validatedItems}
+                onValidationChange={handleBoardValidationChange}
+              />
             ) : (
               <p className="muted">Loading board…</p>
             )}
@@ -963,40 +973,321 @@ function ValidationPanel({
   );
 }
 
-function BacklogBoard({ items }: { items: BacklogItem[] }) {
+type SvgLine = { x1: number; y1: number; x2: number; y2: number; color: string };
+
+function SwimlaneSvgOverlay({
+  trackRef,
+  zoneItems,
+  doneIds
+}: {
+  trackRef: RefObject<HTMLDivElement>;
+  zoneItems: BacklogItem[];
+  doneIds: Set<string>;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [lines, setLines] = useState<SvgLine[]>([]);
+
+  useLayoutEffect(() => {
+    const track = trackRef.current;
+    if (!track) return;
+
+    const trackRect = track.getBoundingClientRect();
+    const cardEls = track.querySelectorAll<HTMLElement>('[data-card-id]');
+    const cardRects = new Map<string, DOMRect>();
+    for (const el of cardEls) {
+      const cardId = el.getAttribute('data-card-id');
+      if (cardId) {
+        cardRects.set(cardId, el.getBoundingClientRect());
+      }
+    }
+
+    const zoneIdSet = new Set(zoneItems.map((item) => item.id));
+    const nextLines: SvgLine[] = [];
+
+    for (const item of zoneItems) {
+      const depRect = cardRects.get(item.id);
+      if (!depRect) continue;
+
+      for (const dependentItem of zoneItems) {
+        if (!zoneIdSet.has(dependentItem.id)) continue;
+        const deps = parseDeps(dependentItem.dependsOn);
+        if (!deps.includes(item.id)) continue;
+
+        const depEndRect = cardRects.get(dependentItem.id);
+        if (!depEndRect) continue;
+
+        // x1 = right edge of dep card, x2 = left edge of dependent card
+        // Positions are relative to the track element
+        const x1 = depRect.right - trackRect.left + track.scrollLeft;
+        const y1 = depRect.top + depRect.height / 2 - trackRect.top;
+        const x2 = depEndRect.left - trackRect.left + track.scrollLeft;
+        const y2 = depEndRect.top + depEndRect.height / 2 - trackRect.top;
+
+        const isDone = doneIds.has(item.id);
+        const color = isDone
+          ? 'rgba(159, 224, 180, 0.25)'
+          : 'rgba(243, 184, 109, 0.3)';
+
+        nextLines.push({ x1, y1, x2, y2, color });
+      }
+    }
+
+    setLines(nextLines);
+  });
+
+  if (lines.length === 0) return null;
+
+  return (
+    <svg
+      ref={svgRef}
+      className="swimlane-svg"
+      aria-hidden="true"
+    >
+      {lines.map((line, index) => {
+        const cx = (line.x1 + line.x2) / 2;
+        const d = `M ${line.x1} ${line.y1} Q ${cx} ${line.y1} ${cx} ${(line.y1 + line.y2) / 2} Q ${cx} ${line.y2} ${line.x2} ${line.y2}`;
+        return (
+          <path
+            key={index}
+            d={d}
+            fill="none"
+            stroke={line.color}
+            strokeWidth="1.5"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+type CardHighlight = 'selected' | 'dep-done' | 'dep-active' | 'dependent' | 'dimmed' | null;
+
+function Swimlane({
+  zone,
+  zoneItems,
+  doneIds,
+  firstActiveId,
+  selectedCardId,
+  selectedDepIds,
+  onSelect,
+  projectId,
+  bossHandoffs,
+  validatedItems,
+  onValidationClick
+}: {
+  zone: string;
+  zoneItems: BacklogItem[];
+  doneIds: Set<string>;
+  firstActiveId: string | null;
+  selectedCardId: string | null;
+  selectedDepIds: Set<string> | null;
+  onSelect: (id: string) => void;
+  projectId: string;
+  bossHandoffs: Map<string, ProjectLogEntry>;
+  validatedItems: ValidatedItemStore;
+  onValidationClick: (item: BacklogItem) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  function getHighlight(item: BacklogItem): CardHighlight {
+    if (!selectedCardId) return null;
+    if (item.id === selectedCardId) return 'selected';
+    if (selectedDepIds && selectedDepIds.has(item.id)) {
+      return item.status === 'done' ? 'dep-done' : 'dep-active';
+    }
+    if (parseDeps(item.dependsOn).includes(selectedCardId)) return 'dependent';
+    return 'dimmed';
+  }
+
+  return (
+    <div className="swimlane">
+      <p className="swimlane-label">{zone}</p>
+      <div className="swimlane-track" ref={trackRef}>
+        {zoneItems.map((item) => {
+          const bossHandoff = bossHandoffs.get(item.id) ?? null;
+          const fingerprint = createValidationFingerprint(item, null, bossHandoff);
+          const storageKey = createValidationStorageKey(projectId, item.id);
+          const record = validatedItems[storageKey];
+          const isValidated = record?.fingerprint === fingerprint;
+          const isStale = !!record && record.fingerprint !== fingerprint;
+          const hasValidationInstructions =
+            item.validation !== null || (bossHandoff !== null && hasInstructionSet(bossHandoff));
+          return (
+            <BoardCard
+              key={`${item.backlogSourceKey}:${item.id}`}
+              item={item}
+              doneIds={doneIds}
+              isFirstActive={item.id === firstActiveId}
+              highlight={getHighlight(item)}
+              onSelect={onSelect}
+              isValidated={isValidated}
+              isStale={isStale}
+              hasValidationInstructions={hasValidationInstructions}
+              onValidationClick={() => onValidationClick(item)}
+            />
+          );
+        })}
+        <SwimlaneSvgOverlay trackRef={trackRef} zoneItems={zoneItems} doneIds={doneIds} />
+      </div>
+    </div>
+  );
+}
+
+type OverlayItem = {
+  item: BacklogItem;
+  bossHandoff: ProjectLogEntry | null;
+  isValidated: boolean;
+  isStale: boolean;
+  storageKey: string;
+  fingerprint: string;
+};
+
+function BacklogBoard({
+  items,
+  projectId,
+  bossHandoffs,
+  validatedItems,
+  onValidationChange
+}: {
+  items: BacklogItem[];
+  projectId: string;
+  bossHandoffs: Map<string, ProjectLogEntry>;
+  validatedItems: ValidatedItemStore;
+  onValidationChange: (storageKey: string, fingerprint: string, validated: boolean) => void;
+}) {
   const doneIds = useMemo(() => new Set(items.filter((i) => i.status === 'done').map((i) => i.id)), [items]);
   const zones = useMemo(() => groupItemsByZone(items), [items]);
   const firstActiveId = items.find((item) => item.status !== 'done')?.id ?? null;
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const selectedCard = selectedCardId ? items.find((i) => i.id === selectedCardId) ?? null : null;
+  const selectedDepIds = selectedCard ? new Set(parseDeps(selectedCard.dependsOn)) : null;
+  const [overlayItem, setOverlayItem] = useState<OverlayItem | null>(null);
+
+  useEffect(() => {
+    if (!overlayItem) return;
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOverlayItem(null);
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [overlayItem]);
+
+  function handleBoardClick(event: React.MouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (!target.closest('.board-card')) setSelectedCardId(null);
+  }
+  function handleSelect(id: string) {
+    setSelectedCardId((prev) => (prev === id ? null : id));
+  }
+  function handleValidationClick(item: BacklogItem) {
+    const bossHandoff = bossHandoffs.get(item.id) ?? null;
+    const fingerprint = createValidationFingerprint(item, null, bossHandoff);
+    const storageKey = createValidationStorageKey(projectId, item.id);
+    const record = validatedItems[storageKey];
+    const isValidated = record?.fingerprint === fingerprint;
+    const isStale = !!record && record.fingerprint !== fingerprint;
+    setOverlayItem({ item, bossHandoff, isValidated, isStale, storageKey, fingerprint });
+  }
 
   return (
-    <div className="board-view">
-      {zones.map(({ zone, items: zoneItems }) => (
-        <div key={zone} className="swimlane">
-          <p className="swimlane-label">{zone}</p>
-          <div className="swimlane-track">
-            {zoneItems.map((item) => (
-              <BoardCard
-                key={`${item.backlogSourceKey}:${item.id}`}
-                item={item}
-                doneIds={doneIds}
-                isFirstActive={item.id === firstActiveId}
-              />
-            ))}
+    <>
+      <div className="board-view" onClick={handleBoardClick}>
+        {zones.map(({ zone, items: zoneItems }) => (
+          <Swimlane
+            key={zone}
+            zone={zone}
+            zoneItems={zoneItems}
+            doneIds={doneIds}
+            firstActiveId={firstActiveId}
+            selectedCardId={selectedCardId}
+            selectedDepIds={selectedDepIds}
+            onSelect={handleSelect}
+            projectId={projectId}
+            bossHandoffs={bossHandoffs}
+            validatedItems={validatedItems}
+            onValidationClick={handleValidationClick}
+          />
+        ))}
+      </div>
+      {overlayItem ? (
+        <div
+          className="validation-overlay-backdrop"
+          onClick={() => setOverlayItem(null)}
+        >
+          <div
+            className="validation-overlay"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="validation-overlay-close"
+              onClick={() => setOverlayItem(null)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <p className="board-card-id">{overlayItem.item.id}</p>
+            <h3 style={{ marginBottom: '16px', marginTop: '6px' }}>{overlayItem.item.title}</h3>
+            {overlayItem.item.validation ? (
+              <BacklogDetail label="Validation" value={overlayItem.item.validation} />
+            ) : null}
+            {overlayItem.bossHandoff && hasInstructionSet(overlayItem.bossHandoff) ? (
+              <InstructionSetBlock entry={overlayItem.bossHandoff} heading="Validation Instructions" />
+            ) : null}
+            {!overlayItem.item.validation &&
+            !(overlayItem.bossHandoff && hasInstructionSet(overlayItem.bossHandoff)) ? (
+              <p className="muted">No explicit validation instructions were recorded for this item.</p>
+            ) : null}
+            {overlayItem.isStale ? (
+              <p className="board-card-stale-warning" style={{ margin: '12px 0' }}>
+                This item has changed since it was last validated. Review carefully before re-validating.
+              </p>
+            ) : null}
+            <div className="validation-actions" style={{ marginTop: '16px' }}>
+              <button
+                type="button"
+                className="mini-action secondary"
+                onClick={() => {
+                  const newValidated = !overlayItem.isValidated;
+                  onValidationChange(overlayItem.storageKey, overlayItem.fingerprint, newValidated);
+                  setOverlayItem((current) =>
+                    current ? { ...current, isValidated: newValidated, isStale: false } : null
+                  );
+                }}
+              >
+                {overlayItem.isValidated ? 'Mark Not Validated' : 'Mark Validated'}
+              </button>
+              {overlayItem.isValidated ? (
+                <span className="validated-inline">Validated in this viewer</span>
+              ) : null}
+            </div>
           </div>
         </div>
-      ))}
-    </div>
+      ) : null}
+    </>
   );
 }
 
 function BoardCard({
   item,
   doneIds,
-  isFirstActive
+  isFirstActive,
+  highlight,
+  onSelect,
+  isValidated,
+  isStale,
+  hasValidationInstructions,
+  onValidationClick
 }: {
   item: BacklogItem;
   doneIds: Set<string>;
   isFirstActive: boolean;
+  highlight: CardHighlight;
+  onSelect: (id: string) => void;
+  isValidated: boolean;
+  isStale: boolean;
+  hasValidationInstructions: boolean;
+  onValidationClick: () => void;
 }) {
   const ref = useRef<HTMLElement>(null);
 
@@ -1007,11 +1298,16 @@ function BoardCard({
   }, []);
 
   const deps = parseDeps(item.dependsOn);
+  const highlightClass = highlight ? ` highlight-${highlight}` : '';
+  const isDone = item.status === 'done';
 
   return (
     <article
       ref={ref}
-      className={`board-card${item.status === 'done' ? ' done' : ''}${isFirstActive ? ' first-active' : ''}`}
+      data-card-id={item.id}
+      className={`board-card${isDone ? ' done' : ''}${isFirstActive ? ' first-active' : ''}${highlightClass}`}
+      onClick={() => onSelect(item.id)}
+      style={{ cursor: 'pointer' }}
     >
       <div className="board-card-top">
         <span className="board-card-id">{item.id}</span>
@@ -1028,6 +1324,31 @@ function BoardCard({
           ))}
         </div>
       ) : null}
+      {isDone ? (
+        <div onClick={(event) => event.stopPropagation()}>
+          {!hasValidationInstructions ? (
+            <p className="board-card-no-validation">No validation rules</p>
+          ) : isValidated ? (
+            <div>
+              <span className="board-card-validated-chip">
+                <span>✓</span>
+                <span>Validated</span>
+              </span>
+              {isStale ? (
+                <p className="board-card-stale-warning">May be outdated</p>
+              ) : null}
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="board-card-validate-btn"
+              onClick={onValidationClick}
+            >
+              Validate
+            </button>
+          )}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -1040,6 +1361,54 @@ function parseDeps(dependsOn: string | null): string[] {
     .filter(Boolean);
 }
 
+function topoSortZoneItems(zoneItems: BacklogItem[]): BacklogItem[] {
+  const idSet = new Set(zoneItems.map((item) => item.id));
+  // Build adjacency: depId -> list of item ids that depend on it (within zone)
+  const inDegree = new Map<string, number>();
+  const dependents = new Map<string, string[]>(); // depId -> [itemId, ...]
+  for (const item of zoneItems) {
+    inDegree.set(item.id, 0);
+    dependents.set(item.id, []);
+  }
+  for (const item of zoneItems) {
+    for (const depId of parseDeps(item.dependsOn)) {
+      if (idSet.has(depId)) {
+        inDegree.set(item.id, (inDegree.get(item.id) ?? 0) + 1);
+        dependents.get(depId)!.push(item.id);
+      }
+    }
+  }
+  // Kahn's algorithm
+  const queue: string[] = [];
+  for (const item of zoneItems) {
+    if ((inDegree.get(item.id) ?? 0) === 0) {
+      queue.push(item.id);
+    }
+  }
+  const itemById = new Map(zoneItems.map((item) => [item.id, item]));
+  const sorted: BacklogItem[] = [];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const item = itemById.get(id);
+    if (item) sorted.push(item);
+    for (const dependentId of (dependents.get(id) ?? [])) {
+      const newDegree = (inDegree.get(dependentId) ?? 0) - 1;
+      inDegree.set(dependentId, newDegree);
+      if (newDegree === 0) {
+        queue.push(dependentId);
+      }
+    }
+  }
+  // If there are cycles, append any remaining items in original order
+  if (sorted.length < zoneItems.length) {
+    const sortedIds = new Set(sorted.map((item) => item.id));
+    for (const item of zoneItems) {
+      if (!sortedIds.has(item.id)) sorted.push(item);
+    }
+  }
+  return sorted;
+}
+
 function groupItemsByZone(items: BacklogItem[]): { zone: string; items: BacklogItem[] }[] {
   const zoneMap = new Map<string, BacklogItem[]>();
   for (const item of items) {
@@ -1047,7 +1416,10 @@ function groupItemsByZone(items: BacklogItem[]): { zone: string; items: BacklogI
     if (!zoneMap.has(zone)) zoneMap.set(zone, []);
     zoneMap.get(zone)!.push(item);
   }
-  return Array.from(zoneMap.entries()).map(([zone, zoneItems]) => ({ zone, items: zoneItems }));
+  return Array.from(zoneMap.entries()).map(([zone, zoneItems]) => ({
+    zone,
+    items: topoSortZoneItems(zoneItems)
+  }));
 }
 
 function LogCard({ entry }: { entry: ProjectLogEntry }) {
