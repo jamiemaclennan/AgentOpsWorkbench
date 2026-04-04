@@ -15,12 +15,15 @@ import type {
 
 const RECONCILIATION_INTERVAL_MS = 300_000;
 const DEFAULT_ROOTS = ['C:\\work'];
-const STATUS_ORDER = ['blocked', 'in_progress', 'todo', 'done', 'unknown'] as const;
+const STATUS_ORDER = ['blocked', 'in_progress', 'todo', 'postponed', 'done', 'unknown'] as const;
+const LOCAL_VALIDATION_STORAGE_KEY = 'agent-log-viewer:validated-items';
 
-type DetailMode = 'overview' | 'logs' | 'framework';
+type DetailMode = 'overview' | 'board' | 'logs' | 'framework';
 type LogSignalFilter = 'all' | 'blocked' | 'active' | 'complete' | 'other';
 type LogGrouping = 'item' | 'timeline' | 'zone';
 type LiveRefreshState = 'live' | 'fallback' | 'reconnecting';
+type ValidatedItemRecord = { fingerprint: string; validatedAt: string };
+type ValidatedItemStore = Record<string, ValidatedItemRecord>;
 
 export default function App() {
   const [rootsText, setRootsText] = useState(DEFAULT_ROOTS.join(', '));
@@ -36,6 +39,7 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>('overview');
+  const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
   const [selectedFileKey, setSelectedFileKey] = useState<FrameworkFileKey | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileContent | null>(null);
 
@@ -57,6 +61,7 @@ export default function App() {
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [liveRefreshState, setLiveRefreshState] = useState<LiveRefreshState>('reconnecting');
+  const [validatedItems, setValidatedItems] = useState<ValidatedItemStore>(() => loadValidatedItems());
   const latestRootsRef = useRef(roots);
   const selectedProjectIdRef = useRef<string | null>(null);
   const selectedFileKeyRef = useRef<FrameworkFileKey | null>(null);
@@ -112,6 +117,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    persistValidatedItems(validatedItems);
+  }, [validatedItems]);
+
+  useEffect(() => {
     if (!selectedProjectId) {
       setProjectDetail(null);
       return;
@@ -136,6 +145,11 @@ export default function App() {
     }
 
     setSelectedProjectId(projectId);
+  }
+
+  function openBoard(projectId: string) {
+    selectProject(projectId);
+    setBoardProjectId(projectId);
   }
 
   async function refreshProjects(showInitialLoader: boolean) {
@@ -241,10 +255,11 @@ export default function App() {
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const blockedReasons = createBlockedReasonMap(projectDetail?.logs ?? []);
   const bossHandoffs = createBossHandoffMap(projectDetail?.logs ?? []);
-  const itemsMissingInstructions = createDoneWithoutInstructionsSet(
+  const itemsMissingInstructions = createInstructionGapSet(
     projectDetail?.backlogItems ?? [],
     projectDetail?.logs ?? []
   );
+  const latestItemActivity = createLatestItemActivityMap(projectDetail?.logs ?? []);
 
   const filteredBacklog = filterBacklogItems(projectDetail?.backlogItems ?? [], deferredBacklogSearch);
   const sourceFilteredBacklog =
@@ -329,8 +344,27 @@ export default function App() {
 
       {error ? <div className="banner error">{error}</div> : null}
 
-      <main className="workspace">
-        <section className="dashboard-panel">
+      <main className={`workspace${boardProjectId ? ' board-mode' : ''}`}>
+        {boardProjectId ? (
+          <section className="board-fullscreen">
+            <div className="board-fullscreen-head">
+              <div>
+                <p className="section-kicker">Board</p>
+                <h2>{projects.find((p) => p.id === boardProjectId)?.name ?? boardProjectId}</h2>
+              </div>
+              <button type="button" className="action" onClick={() => setBoardProjectId(null)}>
+                ← Back
+              </button>
+            </div>
+            {projectDetail && projectDetail.project.id === boardProjectId ? (
+              <BacklogBoard items={projectDetail.backlogItems} />
+            ) : (
+              <p className="muted">Loading board…</p>
+            )}
+          </section>
+        ) : null}
+
+        <section className={`dashboard-panel${boardProjectId ? ' hidden' : ''}`}>
           <div className="section-head">
             <div>
               <p className="section-kicker">Portfolio</p>
@@ -343,14 +377,12 @@ export default function App() {
 
           <div className="tile-grid">
             {projects.map((project) => (
-              <button
-                key={project.id}
-                className={`project-tile${project.id === selectedProjectId ? ' selected' : ''}`}
-                type="button"
-                onClick={() => {
-                  selectProject(project.id, { resetControls: true });
-                }}
-              >
+              <div key={project.id} className={`project-tile${project.id === selectedProjectId ? ' selected' : ''}`}>
+                <button
+                  type="button"
+                  className="tile-select-area"
+                  onClick={() => selectProject(project.id, { resetControls: true })}
+                >
                 <div className="tile-topline">
                   <span className={`attention-pill ${project.attention.tone}`}>{project.attention.label}</span>
                   <span className="log-indicator">{project.hasLogs ? 'Logs present' : 'No logs yet'}</span>
@@ -371,12 +403,20 @@ export default function App() {
                   <span>{project.totalItems} items</span>
                   <span>{formatRecentChange(project.latestChangedAt)}</span>
                 </div>
-              </button>
+                </button>
+                <button
+                  type="button"
+                  className="tile-board-btn"
+                  onClick={() => openBoard(project.id)}
+                >
+                  Board
+                </button>
+              </div>
             ))}
           </div>
         </section>
 
-        <section className="detail-panel">
+        <section className={`detail-panel${boardProjectId ? ' hidden' : ''}`}>
           <div className="section-head">
             <div>
               <p className="section-kicker">Project detail</p>
@@ -470,6 +510,20 @@ export default function App() {
                       active={statusFilter === 'done'}
                       onClick={() => setStatusFilter('done')}
                     />
+                    <SummaryMetric
+                      label="Postponed"
+                      value={projectDetail.project.countsByStatus.postponed}
+                      tone="quiet"
+                      active={statusFilter === 'postponed'}
+                      onClick={() => setStatusFilter('postponed')}
+                    />
+                    <SummaryMetric
+                      label="Unknown"
+                      value={projectDetail.project.countsByStatus.unknown}
+                      tone="quiet"
+                      active={statusFilter === 'unknown'}
+                      onClick={() => setStatusFilter('unknown')}
+                    />
                   </div>
 
                   <div className="log-toolbar backlog-toolbar">
@@ -506,13 +560,35 @@ export default function App() {
                       />
                     ) : (
                       statusFilteredBacklog.map((item) => (
-                        <BacklogRow
-                          key={`${item.backlogSourceKey}:${item.id}`}
-                          item={item}
-                          blockedReason={item.status === 'blocked' ? blockedReasons.get(item.id) ?? null : null}
-                          bossHandoff={bossHandoffs.get(item.id) ?? null}
-                          missingInstructions={itemsMissingInstructions.has(item.id)}
-                        />
+                        (() => {
+                          const bossHandoff = bossHandoffs.get(item.id) ?? null;
+                          const validationFingerprint = createValidationFingerprint(
+                            item,
+                            latestItemActivity.get(item.id) ?? null,
+                            bossHandoff
+                          );
+                          const storageKey = createValidationStorageKey(
+                            selectedProject?.projectPath ?? 'unknown-project',
+                            item.id
+                          );
+
+                          return (
+                            <BacklogRow
+                              key={`${item.backlogSourceKey}:${item.id}`}
+                              item={item}
+                              blockedReason={item.status === 'blocked' ? blockedReasons.get(item.id) ?? null : null}
+                              bossHandoff={bossHandoff}
+                              missingInstructions={itemsMissingInstructions.has(item.id)}
+                              isValidated={isBacklogItemValidated(validatedItems, storageKey, validationFingerprint)}
+                              onValidationChange={(validated) => {
+                                setValidatedItems((current) =>
+                                  updateValidatedItems(current, storageKey, validationFingerprint, validated)
+                                );
+                              }}
+                              validationFingerprint={validationFingerprint}
+                            />
+                          );
+                        })()
                       ))
                     )}
                   </div>
@@ -765,14 +841,22 @@ function BacklogRow({
   item,
   blockedReason,
   bossHandoff,
-  missingInstructions
+  missingInstructions,
+  isValidated,
+  onValidationChange,
+  validationFingerprint
 }: {
   item: BacklogItem;
   blockedReason: string | null;
   bossHandoff: ProjectLogEntry | null;
   missingInstructions: boolean;
+  isValidated: boolean;
+  onValidationChange: (validated: boolean) => void;
+  validationFingerprint: string;
 }) {
   const bossApproval = getBossApprovalState(item.bossSignoff);
+  const awaitingBossSignoff = item.status === 'blocked' && bossApproval.needsApproval;
+  const isDone = item.status === 'done';
 
   return (
     <article className="backlog-row">
@@ -780,19 +864,190 @@ function BacklogRow({
         <span className={`status-dot ${item.status}`}>{labelForStatus(item.status)}</span>
         <span>{item.id}</span>
         {item.ownerZone ? <span>{item.ownerZone}</span> : null}
-        {bossApproval.needsApproval ? <span className="approval-pill">Needs BOSS signoff</span> : null}
+        {awaitingBossSignoff ? <span className="approval-pill">Needs BOSS signoff</span> : null}
+        {isDone && isValidated ? <span className="validated-pill">Validated</span> : null}
         {missingInstructions ? <span className="warning-pill">Missing validation instructions</span> : null}
       </div>
       <h4>{item.title}</h4>
-      <p>{item.notes ?? item.doneWhen ?? item.validation ?? 'No additional notes.'}</p>
-      {bossApproval.note ? <p className="approval-note">BOSS signoff: {bossApproval.note}</p> : null}
+      <div className="backlog-details">
+        {item.notes ? <BacklogDetail label="Notes" value={item.notes} /> : null}
+        {item.doneWhen ? <BacklogDetail label="Done When" value={item.doneWhen} /> : null}
+        {!isDone && item.validation ? <BacklogDetail label="Validation" value={item.validation} /> : null}
+        {!item.notes && !item.doneWhen && (!item.validation || isDone) ? <p>No additional notes.</p> : null}
+      </div>
+      {awaitingBossSignoff && bossApproval.note ? <p className="approval-note">BOSS signoff: {bossApproval.note}</p> : null}
       {blockedReason ? <p className="blocked-reason">Blocked because: {blockedReason}</p> : null}
       {missingInstructions ? (
-        <p className="warning-note">Done items should include `run this`, `open this`, or `expect this` instructions.</p>
+        <p className="warning-note">
+          {awaitingBossSignoff
+            ? 'Items waiting on BOSS signoff should include `run this`, `open this`, or `expect this` instructions.'
+            : 'Done items should include `run this`, `open this`, or `expect this` instructions.'}
+        </p>
       ) : null}
-      {bossHandoff ? <BossHandoffBlock entry={bossHandoff} context="backlog" /> : null}
+      {isDone ? (
+        <ValidationPanel
+          item={item}
+          entry={bossHandoff}
+          isValidated={isValidated}
+          onValidationChange={onValidationChange}
+          fingerprint={validationFingerprint}
+        />
+      ) : null}
+      {awaitingBossSignoff && bossHandoff ? <BossHandoffBlock entry={bossHandoff} context="backlog" /> : null}
     </article>
   );
+}
+
+function BacklogDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="backlog-detail">
+      <p className="backlog-detail-label">{label}</p>
+      <p>{value}</p>
+    </div>
+  );
+}
+
+function ValidationPanel({
+  item,
+  entry,
+  isValidated,
+  onValidationChange,
+  fingerprint
+}: {
+  item: BacklogItem;
+  entry: ProjectLogEntry | null;
+  isValidated: boolean;
+  onValidationChange: (validated: boolean) => void;
+  fingerprint: string;
+}) {
+  const [isOpen, setIsOpen] = useState(!isValidated);
+  const hasInstructions = entry ? hasInstructionSet(entry) : false;
+
+  useEffect(() => {
+    setIsOpen(!isValidated);
+  }, [fingerprint, isValidated]);
+
+  return (
+    <section className={`validation-panel${isOpen ? ' open' : ''}`}>
+      <button type="button" className="validation-toggle" onClick={() => setIsOpen((current) => !current)}>
+        <span>Validation</span>
+        <span className="validation-toggle-indicator" aria-hidden="true">{isOpen ? 'v' : '^'}</span>
+      </button>
+      {isOpen ? (
+        <div className="validation-body">
+          <div className="validation-summary">
+            <p className="backlog-detail-label">Status</p>
+            <p>{isValidated ? 'Validated in this viewer' : 'Needs validation in this viewer'}</p>
+          </div>
+          {item.validation ? <BacklogDetail label="Review Target" value={item.validation} /> : null}
+          {hasInstructions && entry ? <InstructionSetBlock entry={entry} heading="Validation Instructions" /> : null}
+          {!item.validation && !hasInstructions ? (
+            <p className="muted">No explicit validation instructions were recorded for this item.</p>
+          ) : null}
+          <div className="validation-actions">
+            <button
+              type="button"
+              className="mini-action secondary"
+              onClick={() => {
+                onValidationChange(!isValidated);
+                setIsOpen(isValidated);
+              }}
+            >
+              {isValidated ? 'Mark Not Validated' : 'Mark Validated'}
+            </button>
+            {isValidated ? <span className="validated-inline">Validated in this viewer</span> : null}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function BacklogBoard({ items }: { items: BacklogItem[] }) {
+  const doneIds = useMemo(() => new Set(items.filter((i) => i.status === 'done').map((i) => i.id)), [items]);
+  const zones = useMemo(() => groupItemsByZone(items), [items]);
+  const firstActiveId = items.find((item) => item.status !== 'done')?.id ?? null;
+
+  return (
+    <div className="board-view">
+      {zones.map(({ zone, items: zoneItems }) => (
+        <div key={zone} className="swimlane">
+          <p className="swimlane-label">{zone}</p>
+          <div className="swimlane-track">
+            {zoneItems.map((item) => (
+              <BoardCard
+                key={`${item.backlogSourceKey}:${item.id}`}
+                item={item}
+                doneIds={doneIds}
+                isFirstActive={item.id === firstActiveId}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BoardCard({
+  item,
+  doneIds,
+  isFirstActive
+}: {
+  item: BacklogItem;
+  doneIds: Set<string>;
+  isFirstActive: boolean;
+}) {
+  const ref = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (isFirstActive && ref.current) {
+      ref.current.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  }, []);
+
+  const deps = parseDeps(item.dependsOn);
+
+  return (
+    <article
+      ref={ref}
+      className={`board-card${item.status === 'done' ? ' done' : ''}${isFirstActive ? ' first-active' : ''}`}
+    >
+      <div className="board-card-top">
+        <span className="board-card-id">{item.id}</span>
+        <span className={`board-status-badge ${item.status}`}>{labelForStatus(item.status)}</span>
+      </div>
+      <h4 className="board-card-title">{item.title}</h4>
+      {item.notes ? <p className="board-card-notes">{item.notes}</p> : null}
+      {deps.length > 0 ? (
+        <div className="board-card-deps">
+          {deps.map((dep) => (
+            <span key={dep} className={`dep-chip${doneIds.has(dep) ? ' met' : ' unmet'}`}>
+              {dep}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function parseDeps(dependsOn: string | null): string[] {
+  if (!dependsOn) return [];
+  return dependsOn
+    .split(',')
+    .map((d) => d.trim())
+    .filter(Boolean);
+}
+
+function groupItemsByZone(items: BacklogItem[]): { zone: string; items: BacklogItem[] }[] {
+  const zoneMap = new Map<string, BacklogItem[]>();
+  for (const item of items) {
+    const zone = item.ownerZone ?? 'Unzoned';
+    if (!zoneMap.has(zone)) zoneMap.set(zone, []);
+    zoneMap.get(zone)!.push(item);
+  }
+  return Array.from(zoneMap.entries()).map(([zone, zoneItems]) => ({ zone, items: zoneItems }));
 }
 
 function LogCard({ entry }: { entry: ProjectLogEntry }) {
@@ -825,6 +1080,10 @@ function BossHandoffBlock({
   context: 'backlog' | 'log';
 }) {
   const heading = context === 'backlog' ? 'Latest BOSS handoff' : 'BOSS handoff';
+  return <InstructionSetBlock entry={entry} heading={heading} />;
+}
+
+function InstructionSetBlock({ entry, heading }: { entry: ProjectLogEntry; heading: string }) {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -997,7 +1256,7 @@ function createBossHandoffMap(logs: ProjectLogEntry[]): Map<string, ProjectLogEn
   return handoffs;
 }
 
-function createDoneWithoutInstructionsSet(
+function createInstructionGapSet(
   backlogItems: BacklogItem[],
   logs: ProjectLogEntry[]
 ): Set<string> {
@@ -1007,9 +1266,27 @@ function createDoneWithoutInstructionsSet(
 
   return new Set(
     backlogItems
-      .filter((item) => item.status === 'done' && !instructionItems.has(item.id))
+      .filter((item) => {
+        const bossApproval = getBossApprovalState(item.bossSignoff);
+        const needsInstructions = item.status === 'blocked' && bossApproval.needsApproval;
+        return needsInstructions && !instructionItems.has(item.id);
+      })
       .map((item) => item.id)
   );
+}
+
+function createLatestItemActivityMap(logs: ProjectLogEntry[]): Map<string, string> {
+  const activity = new Map<string, string>();
+
+  for (const entry of logs) {
+    if (!entry.itemId || activity.has(entry.itemId)) {
+      continue;
+    }
+
+    activity.set(entry.itemId, `${entry.id}:${entry.ts ?? 'no-ts'}`);
+  }
+
+  return activity;
 }
 
 function createLogItemOptions(logs: ProjectLogEntry[], backlogItems: BacklogItem[]) {
@@ -1131,6 +1408,8 @@ function labelForStatus(status: BacklogStatus | 'all') {
       return 'not started';
     case 'in_progress':
       return 'in progress';
+    case 'postponed':
+      return 'postponed';
     case 'all':
       return 'all';
     default:
@@ -1192,4 +1471,77 @@ function isHttpUrl(value: string): boolean {
 
 function normalizeInstructionCopy(value: string): string {
   return value.replace(/^(run this|open this|expect this)\s*:\s*/i, '').trim();
+}
+
+function createValidationStorageKey(projectPath: string, itemId: string): string {
+  return `${projectPath}::${itemId}`;
+}
+
+function createValidationFingerprint(
+  item: BacklogItem,
+  latestActivity: string | null,
+  entry: ProjectLogEntry | null
+): string {
+  return JSON.stringify({
+    status: item.status,
+    title: item.title,
+    doneWhen: item.doneWhen,
+    validation: item.validation,
+    notes: item.notes,
+    latestActivity,
+    instructionSource: entry?.id ?? null
+  });
+}
+
+function loadValidatedItems(): ValidatedItemStore {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_VALIDATION_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    return JSON.parse(raw) as ValidatedItemStore;
+  } catch {
+    return {};
+  }
+}
+
+function persistValidatedItems(validatedItems: ValidatedItemStore) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(LOCAL_VALIDATION_STORAGE_KEY, JSON.stringify(validatedItems));
+}
+
+function isBacklogItemValidated(
+  validatedItems: ValidatedItemStore,
+  storageKey: string,
+  fingerprint: string
+): boolean {
+  return validatedItems[storageKey]?.fingerprint === fingerprint;
+}
+
+function updateValidatedItems(
+  validatedItems: ValidatedItemStore,
+  storageKey: string,
+  fingerprint: string,
+  validated: boolean
+): ValidatedItemStore {
+  if (!validated) {
+    const { [storageKey]: _removed, ...rest } = validatedItems;
+    return rest;
+  }
+
+  return {
+    ...validatedItems,
+    [storageKey]: {
+      fingerprint,
+      validatedAt: new Date().toISOString()
+    }
+  };
 }

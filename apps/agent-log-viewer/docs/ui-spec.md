@@ -70,6 +70,46 @@ The detail layout may use tabs or a split-panel arrangement, but it should keep 
   - project has no logs
   - project has logs but no readable entries
 
+## Backlog Board View
+
+When a user selects a project, they may switch to a graphical backlog board view in addition to the existing table view.
+
+### Layout
+
+- Use swimlanes, one per owner zone, arranged vertically.
+- Within each swimlane, arrange backlog item cards horizontally in backlog order.
+- Completed items are visually subdued (reduced opacity or muted colors) relative to active items.
+- The view automatically scrolls to the first non-completed item in the backlog on load.
+
+### Card Content
+
+Each backlog item card must show:
+- item ID and title (item description)
+- status — with a distinct color or badge per state (`todo`, `in_progress`, `blocked`, `done`)
+- owner zone (implicit from swimlane, but also shown on the card)
+- dependencies — listed by ID, with visual indicators when a dependency is incomplete
+- notes when present
+
+Each card should feel modern and scannable: clear hierarchy between the ID/title and the secondary fields, comfortable padding, and enough contrast to distinguish states at a glance.
+
+### Dependency Visualization
+
+- Dependency IDs on each card should be visually distinct (e.g., badge or chip).
+- If a dependency is not yet `done`, the chip should signal that (e.g., amber color or an incomplete indicator).
+- Full dependency graph lines are not required in v1 — per-card chips are sufficient.
+
+### Validation Instructions (Deferred)
+
+- For `done` items, if validation instructions are present in the source backlog, they should be expandable on the card.
+- This is not required in the first implementation of the board view. Track as a follow-on item.
+
+### Interaction Rules
+
+- The board view is an alternative to the existing table-based backlog view, not a replacement.
+- A toggle or tab in the project detail view switches between table and board.
+- Selecting a card may open the same item detail or log context as the table row equivalent.
+- Auto-scroll to the first non-completed item happens on initial load and on each refresh that does not change the user's current scroll position intentionally.
+
 ## Responsive Rule
 
 - v1 is desktop-first.
