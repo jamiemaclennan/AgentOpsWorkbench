@@ -220,7 +220,6 @@ h1 {
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
-  overflow: hidden;
 }
 
 .board-fullscreen-head {
@@ -491,6 +490,22 @@ h1 {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.backlog-id-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background 150ms ease, color 150ms ease;
+}
+.backlog-id-link:hover {
+  background: rgba(159, 224, 180, 0.12);
+  text-decoration: underline;
+}
+
 .backlog-row h4,
 .log-card h4 {
   margin-top: 10px;
@@ -758,8 +773,32 @@ h1 {
 /* ── Board view ──────────────────────────────────────────── */
 
 .board-view {
+  position: relative;
   display: grid;
-  gap: 24px;
+  gap: 28px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: calc(100vh - 200px);
+  padding-bottom: 24px;
+}
+
+.board-view.focus-active {
+  overflow: auto;
+  cursor: grab;
+}
+
+.board-view.focus-active.grabbing {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.board-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 3;
 }
 
 .swimlane-label {
@@ -773,30 +812,29 @@ h1 {
 
 .swimlane {
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .swimlane-track {
   display: flex;
-  gap: 12px;
-  overflow-x: auto;
+  gap: 80px;
   padding-bottom: 6px;
-  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
-.swimlane-svg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+.board-view.focus-active .swimlane-track {
   overflow: visible;
 }
 
+.board-view::-webkit-scrollbar,
 .swimlane-track::-webkit-scrollbar {
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 
+.board-view::-webkit-scrollbar-thumb,
 .swimlane-track::-webkit-scrollbar-thumb {
   background: rgba(159, 224, 180, 0.2);
   border-radius: 999px;
@@ -819,8 +857,8 @@ h1 {
 }
 
 .board-card.first-active {
-  border-color: rgba(159, 224, 180, 0.38);
-  box-shadow: 0 0 0 2px rgba(159, 224, 180, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .board-card-top {
@@ -923,6 +961,14 @@ h1 {
   color: var(--warn);
   border: 1px solid rgba(243, 184, 109, 0.22);
 }
+.dep-chip.parent {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.board-card {
+  transition: opacity 250ms ease, border-color 250ms ease, box-shadow 250ms ease;
+}
 
 .board-card.highlight-selected {
   border-color: rgba(159, 224, 180, 0.7);
@@ -939,12 +985,36 @@ h1 {
   opacity: 1;
 }
 .board-card.highlight-dependent {
-  border-color: rgba(159, 224, 180, 0.4);
-  box-shadow: 0 0 0 2px rgba(159, 224, 180, 0.12);
+  border-color: rgba(120, 180, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(120, 180, 255, 0.15);
   opacity: 1;
 }
 .board-card.highlight-dimmed {
-  opacity: 0.25;
+  opacity: 0;
+  pointer-events: none;
+}
+.board-card.highlight-dimmed.collapsed {
+  display: none;
+}
+
+/* Focus mode gap spacer — same width as a card to maintain column alignment */
+.board-slot-gap {
+  flex: 0 0 220px;
+  min-height: 1px;
+}
+
+/* Swimlane collapse in focus mode */
+.swimlane.swimlane-collapsed {
+  display: none;
+}
+
+/* SVG connector line fade-in */
+.board-svg path {
+  animation: connectorFadeIn 250ms ease forwards;
+}
+@keyframes connectorFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .validation-overlay-backdrop {

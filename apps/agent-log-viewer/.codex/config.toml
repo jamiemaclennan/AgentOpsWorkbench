@@ -7,7 +7,7 @@ model_reasoning_effort = "medium"
 
 [features]
 
-[projects.'\\?\C:\work\AgentLogViewer']
+[projects.'\\?\C:\work\AgentOpsWorkbench\apps\agent-log-viewer']
 trust_level = "trusted"
 
 [agents]

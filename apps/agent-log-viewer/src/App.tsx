@@ -1,4 +1,5 @@
-import { type RefObject, startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, Component, type ReactNode, startTransition, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { fetchFileContent, fetchProjectDetail, fetchProjects } from './api';
 import type {
@@ -12,6 +13,35 @@ import type {
   WatchEventPayload,
   WatchStatus
 } from './shared/types';
+
+class BoardErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="empty-state" style={{ padding: '24px' }}>
+          <strong>Board failed to render</strong>
+          <p className="muted" style={{ marginTop: '8px', fontSize: '0.88rem' }}>{this.state.error}</p>
+          <button
+            type="button"
+            className="mini-action secondary"
+            style={{ marginTop: '12px' }}
+            onClick={() => this.setState({ error: null })}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const RECONCILIATION_INTERVAL_MS = 300_000;
 const DEFAULT_ROOTS = ['C:\\work'];
@@ -40,11 +70,12 @@ export default function App() {
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [detailMode, setDetailMode] = useState<DetailMode>('overview');
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
+  const [boardInitialCardId, setBoardInitialCardId] = useState<string | null>(null);
   const [selectedFileKey, setSelectedFileKey] = useState<FrameworkFileKey | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileContent | null>(null);
 
   const [backlogSearch, setBacklogSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<BacklogStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<BacklogStatus | 'all' | 'needs-validation'>('all');
   const [backlogSourceFilter, setBacklogSourceFilter] = useState('all');
   const [backlogZoneFilter, setBacklogZoneFilter] = useState('all');
   const deferredBacklogSearch = useDeferredValue(backlogSearch);
@@ -147,9 +178,10 @@ export default function App() {
     setSelectedProjectId(projectId);
   }
 
-  function openBoard(projectId: string) {
+  function openBoard(projectId: string, initialCardId?: string) {
     selectProject(projectId);
     setBoardProjectId(projectId);
+    setBoardInitialCardId(initialCardId ?? null);
   }
 
   async function refreshProjects(showInitialLoader: boolean) {
@@ -265,6 +297,19 @@ export default function App() {
   );
   const latestItemActivity = createLatestItemActivityMap(projectDetail?.logs ?? []);
 
+  const needsValidationCount = useMemo(() => {
+    const allItems = projectDetail?.backlogItems ?? [];
+    return allItems.filter((item) => {
+      if (item.status !== 'done') return false;
+      const bh = bossHandoffs.get(item.id) ?? null;
+      const hasInstructions = item.validation !== null || (bh !== null && hasInstructionSet(bh));
+      if (!hasInstructions) return false;
+      const fp = createValidationFingerprint(item, latestItemActivity.get(item.id) ?? null, bh);
+      const sk = createValidationStorageKey(selectedProject?.projectPath ?? 'unknown-project', item.id);
+      return !isBacklogItemValidated(validatedItems, sk, fp);
+    }).length;
+  }, [projectDetail, bossHandoffs, latestItemActivity, validatedItems, selectedProject]);
+
   const filteredBacklog = filterBacklogItems(projectDetail?.backlogItems ?? [], deferredBacklogSearch);
   const sourceFilteredBacklog =
     backlogSourceFilter === 'all'
@@ -275,13 +320,32 @@ export default function App() {
       ? sourceFilteredBacklog
       : sourceFilteredBacklog.filter((item) => item.ownerZone === backlogZoneFilter);
   const statusFilteredBacklog = useMemo(() => {
-    const items =
-      statusFilter === 'all'
-        ? zoneFilteredBacklog
-        : zoneFilteredBacklog.filter((item) => item.status === statusFilter);
+    let items: BacklogItem[];
+    if (statusFilter === 'all') {
+      items = zoneFilteredBacklog;
+    } else if (statusFilter === 'needs-validation') {
+      items = zoneFilteredBacklog.filter((item) => {
+        if (item.status !== 'done') return false;
+        const bossHandoff = bossHandoffs.get(item.id) ?? null;
+        const hasInstructions = item.validation !== null || (bossHandoff !== null && hasInstructionSet(bossHandoff));
+        if (!hasInstructions) return false;
+        const fingerprint = createValidationFingerprint(
+          item,
+          latestItemActivity.get(item.id) ?? null,
+          bossHandoff
+        );
+        const storageKey = createValidationStorageKey(
+          selectedProject?.projectPath ?? 'unknown-project',
+          item.id
+        );
+        return !isBacklogItemValidated(validatedItems, storageKey, fingerprint);
+      });
+    } else {
+      items = zoneFilteredBacklog.filter((item) => item.status === statusFilter);
+    }
 
     return sortBacklogItemsByRecentLog(items, projectDetail?.logs ?? []);
-  }, [zoneFilteredBacklog, statusFilter, projectDetail]);
+  }, [zoneFilteredBacklog, statusFilter, projectDetail, validatedItems, bossHandoffs, latestItemActivity, selectedProject]);
 
   const logItems = useMemo(
     () => createLogItemOptions(projectDetail?.logs ?? [], projectDetail?.backlogItems ?? []),
@@ -361,13 +425,16 @@ export default function App() {
               </button>
             </div>
             {projectDetail && projectDetail.project.id === boardProjectId ? (
-              <BacklogBoard
-                items={projectDetail.backlogItems}
-                projectId={projectDetail.project.id}
-                bossHandoffs={bossHandoffs}
-                validatedItems={validatedItems}
-                onValidationChange={handleBoardValidationChange}
-              />
+              <BoardErrorBoundary>
+                <BacklogBoard
+                  items={projectDetail.backlogItems}
+                  projectId={projectDetail.project.id}
+                  bossHandoffs={bossHandoffs}
+                  validatedItems={validatedItems}
+                  onValidationChange={handleBoardValidationChange}
+                  initialSelectedCardId={boardInitialCardId}
+                />
+              </BoardErrorBoundary>
             ) : (
               <p className="muted">Loading board…</p>
             )}
@@ -473,7 +540,9 @@ export default function App() {
                       <h3>Backlogs</h3>
                       <p>
                         Aggregated across the primary backlog and any sibling backlogs.
-                        {statusFilter !== 'all' ? ` Showing ${labelForStatus(statusFilter)} items.` : ''}
+                        {statusFilter === 'needs-validation'
+                          ? ' Showing done items that need validation.'
+                          : statusFilter !== 'all' ? ` Showing ${labelForStatus(statusFilter)} items.` : ''}
                       </p>
                     </div>
                     <input
@@ -519,6 +588,13 @@ export default function App() {
                       tone="quiet"
                       active={statusFilter === 'done'}
                       onClick={() => setStatusFilter('done')}
+                    />
+                    <SummaryMetric
+                      label="Needs validation"
+                      value={needsValidationCount}
+                      tone="blocked"
+                      active={statusFilter === 'needs-validation'}
+                      onClick={() => setStatusFilter('needs-validation')}
                     />
                     <SummaryMetric
                       label="Postponed"
@@ -596,6 +672,7 @@ export default function App() {
                                 );
                               }}
                               validationFingerprint={validationFingerprint}
+                              onNavigateToBoard={(itemId) => openBoard(selectedProject!.id, itemId)}
                             />
                           );
                         })()
@@ -854,7 +931,8 @@ function BacklogRow({
   missingInstructions,
   isValidated,
   onValidationChange,
-  validationFingerprint
+  validationFingerprint,
+  onNavigateToBoard
 }: {
   item: BacklogItem;
   blockedReason: string | null;
@@ -863,6 +941,7 @@ function BacklogRow({
   isValidated: boolean;
   onValidationChange: (validated: boolean) => void;
   validationFingerprint: string;
+  onNavigateToBoard: (itemId: string) => void;
 }) {
   const bossApproval = getBossApprovalState(item.bossSignoff);
   const awaitingBossSignoff = item.status === 'blocked' && bossApproval.needsApproval;
@@ -872,7 +951,14 @@ function BacklogRow({
     <article className="backlog-row">
       <div className="row-meta">
         <span className={`status-dot ${item.status}`}>{labelForStatus(item.status)}</span>
-        <span>{item.id}</span>
+        <button
+          type="button"
+          className="backlog-id-link"
+          onClick={() => onNavigateToBoard(item.id)}
+          title="View on board"
+        >
+          {item.id}
+        </button>
         {item.ownerZone ? <span>{item.ownerZone}</span> : null}
         {awaitingBossSignoff ? <span className="approval-pill">Needs BOSS signoff</span> : null}
         {isDone && isValidated ? <span className="validated-pill">Validated</span> : null}
@@ -973,102 +1059,181 @@ function ValidationPanel({
   );
 }
 
-type SvgLine = { x1: number; y1: number; x2: number; y2: number; color: string };
 
-function SwimlaneSvgOverlay({
-  trackRef,
-  zoneItems,
-  doneIds
+// Arrowhead dimensions (in SVG user units / px)
+const ARROW_LENGTH = 12;
+const ARROW_HALF_WIDTH = 5;
+
+function BoardSvgOverlay({
+  boardRef,
+  items,
+  doneIds,
+  selectedCardId,
+  focusCollapsed
 }: {
-  trackRef: RefObject<HTMLDivElement>;
-  zoneItems: BacklogItem[];
+  boardRef: RefObject<HTMLDivElement | null>;
+  items: BacklogItem[];
   doneIds: Set<string>;
+  selectedCardId: string | null;
+  focusCollapsed: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [lines, setLines] = useState<SvgLine[]>([]);
 
   useLayoutEffect(() => {
-    const track = trackRef.current;
-    if (!track) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    const trackRect = track.getBoundingClientRect();
-    const cardEls = track.querySelectorAll<HTMLElement>('[data-card-id]');
+    const board = boardRef.current;
+    if (!board || !selectedCardId) {
+      svg.style.display = 'none';
+      return;
+    }
+
+    const boardRect = board.getBoundingClientRect();
+    const sL = board.scrollLeft;
+    const sT = board.scrollTop;
+
+    function toLocal(r: DOMRect) {
+      return {
+        left: r.left - boardRect.left + sL,
+        right: r.right - boardRect.left + sL,
+        top: r.top - boardRect.top + sT,
+        bottom: r.bottom - boardRect.top + sT,
+        cx: r.left + r.width / 2 - boardRect.left + sL,
+        cy: r.top + r.height / 2 - boardRect.top + sT
+      };
+    }
+
+    // Collect card DOM rects
     const cardRects = new Map<string, DOMRect>();
-    for (const el of cardEls) {
-      const cardId = el.getAttribute('data-card-id');
-      if (cardId) {
-        cardRects.set(cardId, el.getBoundingClientRect());
-      }
+    for (const el of board.querySelectorAll<HTMLElement>('[data-card-id]')) {
+      const id = el.getAttribute('data-card-id');
+      if (id) cardRects.set(id, el.getBoundingClientRect());
     }
 
-    const zoneIdSet = new Set(zoneItems.map((item) => item.id));
-    const nextLines: SvgLine[] = [];
-
-    for (const item of zoneItems) {
-      const depRect = cardRects.get(item.id);
-      if (!depRect) continue;
-
-      for (const dependentItem of zoneItems) {
-        if (!zoneIdSet.has(dependentItem.id)) continue;
-        const deps = parseDeps(dependentItem.dependsOn);
-        if (!deps.includes(item.id)) continue;
-
-        const depEndRect = cardRects.get(dependentItem.id);
-        if (!depEndRect) continue;
-
-        // x1 = right edge of dep card, x2 = left edge of dependent card
-        // Positions are relative to the track element
-        const x1 = depRect.right - trackRect.left + track.scrollLeft;
-        const y1 = depRect.top + depRect.height / 2 - trackRect.top;
-        const x2 = depEndRect.left - trackRect.left + track.scrollLeft;
-        const y2 = depEndRect.top + depEndRect.height / 2 - trackRect.top;
-
-        const isDone = doneIds.has(item.id);
-        const color = isDone
-          ? 'rgba(159, 224, 180, 0.25)'
-          : 'rgba(243, 184, 109, 0.3)';
-
-        nextLines.push({ x1, y1, x2, y2, color });
-      }
+    const itemById = new Map(items.map((i) => [i.id, i]));
+    const selItem = itemById.get(selectedCardId);
+    if (!selItem || !cardRects.has(selectedCardId)) {
+      svg.style.display = 'none';
+      return;
     }
 
-    setLines(nextLines);
+    // Compute edges: deps (selected depends on them) and dependents (they depend on selected)
+    const depIds = parseDeps(selItem.dependsOn).filter((d) => itemById.has(d) && cardRects.has(d));
+    const dependentIds = items
+      .filter((i) => i.id !== selectedCardId && parseDeps(i.dependsOn).includes(selectedCardId) && cardRects.has(i.id))
+      .map((i) => i.id);
+
+    if (depIds.length === 0 && dependentIds.length === 0) {
+      svg.style.display = 'none';
+      return;
+    }
+
+    // Draw a bezier connector with a manually-drawn arrowhead.
+    // The arrowhead is always horizontal, pointing at the target card edge.
+    // The bezier line terminates at the arrowhead's base (not the card edge).
+    // fromId = logical source, toId = logical target (arrow points at toId).
+    function drawEdge(fromId: string, toId: string, color: string, dashed = false) {
+      const fromRect = cardRects.get(fromId);
+      const toRect = cardRects.get(toId);
+      if (!fromRect || !toRect) return;
+      const fr = toLocal(fromRect);
+      const tr = toLocal(toRect);
+
+      // Determine which side the arrow enters the target card.
+      // Arrow always points horizontally at the target card's nearest edge.
+      const targetIsRight = fr.cx <= tr.cx;
+
+      // Source exits its nearest edge toward target; target arrow is at its nearest edge.
+      const x1 = targetIsRight ? fr.right : fr.left;
+      const y1 = fr.cy;
+      const arrowTipX = targetIsRight ? tr.left : tr.right;
+      const arrowTipY = tr.cy;
+
+      // Arrowhead base is offset from the card edge by ARROW_LENGTH, toward the source.
+      const arrowBaseX = targetIsRight ? arrowTipX - ARROW_LENGTH : arrowTipX + ARROW_LENGTH;
+
+      // Bezier ends at arrowhead base, not the card edge.
+      const x2 = arrowBaseX;
+      const y2 = arrowTipY;
+
+      // Control point offset scales with horizontal distance for a smooth curve.
+      const dx = Math.abs(x2 - x1);
+      const cpOffset = Math.max(60, dx * 0.4);
+
+      const cp1x = targetIsRight ? x1 + cpOffset : x1 - cpOffset;
+      const cp2x = targetIsRight ? x2 - cpOffset : x2 + cpOffset;
+
+      // Draw the bezier path
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', `M ${x1} ${y1} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${x2} ${y2}`);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', color);
+      path.setAttribute('stroke-width', dashed ? '1.5' : '2');
+      if (dashed) path.setAttribute('stroke-dasharray', '6 4');
+      svg!.appendChild(path);
+
+      // Draw the arrowhead as a filled triangle, always horizontal.
+      // Points: tip at card edge, two base corners offset back toward the source.
+      const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      const hw = dashed ? ARROW_HALF_WIDTH - 1 : ARROW_HALF_WIDTH;
+      polygon.setAttribute('points', [
+        `${arrowTipX},${arrowTipY}`,
+        `${arrowBaseX},${arrowTipY - hw}`,
+        `${arrowBaseX},${arrowTipY + hw}`
+      ].join(' '));
+      polygon.setAttribute('fill', color);
+      if (dashed) polygon.setAttribute('opacity', '0.7');
+      svg!.appendChild(polygon);
+    }
+
+    // Draw dependency lines (dep → selected): green/amber arrows pointing to selected card.
+    // Parent-child links (inferred from ID structure) are dashed.
+    for (const depId of depIds) {
+      const isDone = doneIds.has(depId);
+      const parentChild = isChildOf(selectedCardId, depId);
+      const color = isDone ? 'rgba(159,224,180,0.85)' : 'rgba(243,184,109,0.9)';
+      drawEdge(depId, selectedCardId, color, parentChild);
+    }
+
+    // Draw dependent lines (selected → dependent): accent-colored arrows pointing to dependents.
+    // Parent-child links are dashed.
+    for (const depId of dependentIds) {
+      const parentChild = isChildOf(depId, selectedCardId);
+      drawEdge(selectedCardId, depId, 'rgba(120,180,255,0.9)', parentChild);
+    }
+
+    svg.setAttribute('width', String(board.scrollWidth));
+    svg.setAttribute('height', String(board.scrollHeight));
+    svg.style.display = 'block';
   });
-
-  if (lines.length === 0) return null;
 
   return (
     <svg
       ref={svgRef}
-      className="swimlane-svg"
+      className="board-svg"
       aria-hidden="true"
-    >
-      {lines.map((line, index) => {
-        const cx = (line.x1 + line.x2) / 2;
-        const d = `M ${line.x1} ${line.y1} Q ${cx} ${line.y1} ${cx} ${(line.y1 + line.y2) / 2} Q ${cx} ${line.y2} ${line.x2} ${line.y2}`;
-        return (
-          <path
-            key={index}
-            d={d}
-            fill="none"
-            stroke={line.color}
-            strokeWidth="1.5"
-          />
-        );
-      })}
-    </svg>
+      style={{ display: 'none' }}
+    />
   );
 }
 
 type CardHighlight = 'selected' | 'dep-done' | 'dep-active' | 'dependent' | 'dimmed' | null;
 
+type FocusSlot = BacklogItem | null;
+type FocusLayout = { zoneSlots: Map<string, FocusSlot[]>; columnCount: number } | null;
+
 function Swimlane({
   zone,
-  zoneItems,
+  items: zoneItems,
   doneIds,
   firstActiveId,
   selectedCardId,
   selectedDepIds,
+  participatingIds,
+  focusCollapsed,
+  focusLayout,
   onSelect,
   projectId,
   bossHandoffs,
@@ -1076,19 +1241,20 @@ function Swimlane({
   onValidationClick
 }: {
   zone: string;
-  zoneItems: BacklogItem[];
+  items: BacklogItem[];
   doneIds: Set<string>;
   firstActiveId: string | null;
   selectedCardId: string | null;
   selectedDepIds: Set<string> | null;
+  participatingIds: Set<string> | null;
+  focusCollapsed: boolean;
+  focusLayout: FocusLayout;
   onSelect: (id: string) => void;
   projectId: string;
   bossHandoffs: Map<string, ProjectLogEntry>;
   validatedItems: ValidatedItemStore;
   onValidationClick: (item: BacklogItem) => void;
 }) {
-  const trackRef = useRef<HTMLDivElement>(null);
-
   function getHighlight(item: BacklogItem): CardHighlight {
     if (!selectedCardId) return null;
     if (item.id === selectedCardId) return 'selected';
@@ -1099,35 +1265,56 @@ function Swimlane({
     return 'dimmed';
   }
 
+  // If focus mode is active and no items in this zone participate, collapse the swimlane
+  const hasParticipant = !participatingIds || zoneItems.some((i) => participatingIds.has(i.id));
+  const isCollapsed = focusCollapsed && !hasParticipant;
+
+  // In focused+collapsed mode, render using slot arrays from focusLayout (with gap spacers)
+  const useFocusLayout = focusCollapsed && focusLayout && hasParticipant;
+  const slots = useFocusLayout ? focusLayout.zoneSlots.get(zone) ?? null : null;
+
+  function renderCard(item: BacklogItem, highlight: CardHighlight, isDimmedCollapsed: boolean) {
+    const bossHandoff = bossHandoffs.get(item.id) ?? null;
+    const fingerprint = createValidationFingerprint(item, null, bossHandoff);
+    const storageKey = createValidationStorageKey(projectId, item.id);
+    const record = validatedItems[storageKey];
+    const isValidated = record?.fingerprint === fingerprint;
+    const isStale = !!record && record.fingerprint !== fingerprint;
+    const hasValidationInstructions =
+      item.validation !== null || (bossHandoff !== null && hasInstructionSet(bossHandoff));
+    return (
+      <BoardCard
+        key={`${item.backlogSourceKey}:${item.id}`}
+        item={item}
+        doneIds={doneIds}
+        isFirstActive={item.id === firstActiveId}
+        highlight={highlight}
+        isDimmedCollapsed={isDimmedCollapsed}
+        onSelect={onSelect}
+        isValidated={isValidated}
+        isStale={isStale}
+        hasValidationInstructions={hasValidationInstructions}
+        onValidationClick={() => onValidationClick(item)}
+      />
+    );
+  }
+
   return (
-    <div className="swimlane">
+    <div className={`swimlane${isCollapsed ? ' swimlane-collapsed' : ''}`} data-zone={zone}>
       <p className="swimlane-label">{zone}</p>
-      <div className="swimlane-track" ref={trackRef}>
-        {zoneItems.map((item) => {
-          const bossHandoff = bossHandoffs.get(item.id) ?? null;
-          const fingerprint = createValidationFingerprint(item, null, bossHandoff);
-          const storageKey = createValidationStorageKey(projectId, item.id);
-          const record = validatedItems[storageKey];
-          const isValidated = record?.fingerprint === fingerprint;
-          const isStale = !!record && record.fingerprint !== fingerprint;
-          const hasValidationInstructions =
-            item.validation !== null || (bossHandoff !== null && hasInstructionSet(bossHandoff));
-          return (
-            <BoardCard
-              key={`${item.backlogSourceKey}:${item.id}`}
-              item={item}
-              doneIds={doneIds}
-              isFirstActive={item.id === firstActiveId}
-              highlight={getHighlight(item)}
-              onSelect={onSelect}
-              isValidated={isValidated}
-              isStale={isStale}
-              hasValidationInstructions={hasValidationInstructions}
-              onValidationClick={() => onValidationClick(item)}
-            />
-          );
-        })}
-        <SwimlaneSvgOverlay trackRef={trackRef} zoneItems={zoneItems} doneIds={doneIds} />
+      <div className="swimlane-track">
+        {slots
+          ? slots.map((slot, idx) =>
+              slot
+                ? renderCard(slot, getHighlight(slot), false)
+                : <div key={`gap-${idx}`} className="board-slot-gap" />
+            )
+          : zoneItems.map((item) => {
+              const highlight = getHighlight(item);
+              const isDimmedCollapsed = highlight === 'dimmed' && focusCollapsed;
+              return renderCard(item, highlight, isDimmedCollapsed);
+            })
+        }
       </div>
     </div>
   );
@@ -1147,21 +1334,136 @@ function BacklogBoard({
   projectId,
   bossHandoffs,
   validatedItems,
-  onValidationChange
+  onValidationChange,
+  initialSelectedCardId
 }: {
   items: BacklogItem[];
   projectId: string;
   bossHandoffs: Map<string, ProjectLogEntry>;
   validatedItems: ValidatedItemStore;
   onValidationChange: (storageKey: string, fingerprint: string, validated: boolean) => void;
+  initialSelectedCardId: string | null;
 }) {
   const doneIds = useMemo(() => new Set(items.filter((i) => i.status === 'done').map((i) => i.id)), [items]);
-  const zones = useMemo(() => groupItemsByZone(items), [items]);
+  const layout = useMemo(() => computeBoardLayout(items), [items]);
   const firstActiveId = items.find((item) => item.status !== 'done')?.id ?? null;
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(initialSelectedCardId);
   const selectedCard = selectedCardId ? items.find((i) => i.id === selectedCardId) ?? null : null;
   const selectedDepIds = selectedCard ? new Set(parseDeps(selectedCard.dependsOn)) : null;
+  // Compute the full set of participating IDs (selected + deps + dependents)
+  const participatingIds = useMemo(() => {
+    if (!selectedCardId) return null;
+    const set = new Set<string>();
+    set.add(selectedCardId);
+    const sel = items.find((i) => i.id === selectedCardId);
+    if (sel) {
+      for (const d of parseDeps(sel.dependsOn)) set.add(d);
+    }
+    for (const item of items) {
+      if (parseDeps(item.dependsOn).includes(selectedCardId)) set.add(item.id);
+    }
+    return set;
+  }, [selectedCardId, items]);
+  // Compute global column layout for participating cards in focus mode.
+  // Every item must be to the right of all its deps across all zones.
+  // Produces slot arrays with null gaps, like the original global layout approach.
+  const focusLayout: FocusLayout = useMemo(() => {
+    if (!participatingIds) return null;
+    const pItems = items.filter((i) => participatingIds.has(i.id));
+    const allIds = new Set(pItems.map((i) => i.id));
+    const depsOf = new Map<string, string[]>();
+    for (const item of pItems) {
+      depsOf.set(item.id, parseDeps(item.dependsOn).filter((d) => allIds.has(d)));
+    }
+    // Compute column = longest dependency chain depth
+    const colOf = new Map<string, number>();
+    const computing = new Set<string>();
+    function getCol(id: string): number {
+      if (colOf.has(id)) return colOf.get(id)!;
+      if (computing.has(id)) return 0;
+      computing.add(id);
+      const deps = depsOf.get(id) ?? [];
+      const col = deps.length === 0 ? 0 : Math.max(...deps.map((d) => getCol(d))) + 1;
+      colOf.set(id, col);
+      computing.delete(id);
+      return col;
+    }
+    for (const item of pItems) getCol(item.id);
+    // Group by zone
+    const zoneMap = new Map<string, BacklogItem[]>();
+    for (const item of pItems) {
+      const z = item.ownerZone ?? 'Unzoned';
+      if (!zoneMap.has(z)) zoneMap.set(z, []);
+      zoneMap.get(z)!.push(item);
+    }
+    // Resolve unique columns per zone
+    let changed = true;
+    let iter = 0;
+    while (changed && iter < 100) {
+      changed = false;
+      iter++;
+      for (const item of pItems) {
+        for (const depId of depsOf.get(item.id) ?? []) {
+          if ((colOf.get(item.id) ?? 0) <= (colOf.get(depId) ?? 0)) {
+            colOf.set(item.id, (colOf.get(depId) ?? 0) + 1);
+            changed = true;
+          }
+        }
+      }
+      for (const [, zItems] of zoneMap) {
+        const sorted = [...zItems].sort((a, b) => (colOf.get(a.id) ?? 0) - (colOf.get(b.id) ?? 0));
+        let lastCol = -1;
+        for (const item of sorted) {
+          if ((colOf.get(item.id) ?? 0) <= lastCol) {
+            colOf.set(item.id, lastCol + 1);
+            changed = true;
+          }
+          lastCol = colOf.get(item.id) ?? 0;
+        }
+      }
+    }
+    const maxCol = Math.max(0, ...Array.from(colOf.values()));
+    const columnCount = maxCol + 1;
+    // Build slot arrays per zone
+    const zoneSlots = new Map<string, FocusSlot[]>();
+    for (const [zone, zItems] of zoneMap) {
+      const slots: FocusSlot[] = Array(columnCount).fill(null);
+      for (const item of zItems) {
+        slots[colOf.get(item.id) ?? 0] = item;
+      }
+      zoneSlots.set(zone, slots);
+    }
+    return { zoneSlots, columnCount };
+  }, [participatingIds, items]);
+  // Track whether focus-mode collapse is active (delayed after fade animation)
+  const [focusCollapsed, setFocusCollapsed] = useState(false);
+  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    if (selectedCardId) {
+      // Delay collapse until after the 250ms fade animation
+      collapseTimer.current = setTimeout(() => setFocusCollapsed(true), 260);
+    } else {
+      setFocusCollapsed(false);
+    }
+    return () => { if (collapseTimer.current) clearTimeout(collapseTimer.current); };
+  }, [selectedCardId]);
+  // After focus collapse completes, scroll the selected card into view
+  useEffect(() => {
+    if (focusCollapsed && selectedCardId) {
+      requestAnimationFrame(() => {
+        const card = boardRef.current?.querySelector(`[data-card-id="${selectedCardId}"]`);
+        card?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      });
+    }
+  }, [focusCollapsed, selectedCardId]);
   const [overlayItem, setOverlayItem] = useState<OverlayItem | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+
+  // Drag-to-scroll state (refs to avoid re-renders)
+  const dragState = useRef<{ active: boolean; startX: number; startY: number; scrollX: number; scrollY: number }>({
+    active: false, startX: 0, startY: 0, scrollX: 0, scrollY: 0
+  });
 
   useEffect(() => {
     if (!overlayItem) return;
@@ -1173,11 +1475,14 @@ function BacklogBoard({
   }, [overlayItem]);
 
   function handleBoardClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (dragState.current.active) return;
     const target = event.target as HTMLElement;
     if (!target.closest('.board-card')) setSelectedCardId(null);
   }
   function handleSelect(id: string) {
-    setSelectedCardId((prev) => (prev === id ? null : id));
+    if (dragState.current.active) return;
+    // Always select the clicked card (no toggle). Deselection is via clicking empty board space.
+    setSelectedCardId(id);
   }
   function handleValidationClick(item: BacklogItem) {
     const bossHandoff = bossHandoffs.get(item.id) ?? null;
@@ -1189,18 +1494,68 @@ function BacklogBoard({
     setOverlayItem({ item, bossHandoff, isValidated, isStale, storageKey, fingerprint });
   }
 
+  // Drag-to-scroll handlers — only active in focus mode (card selected)
+  function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (!selectedCardId) return;
+    if ((event.target as HTMLElement).closest('.board-card')) return;
+    const board = boardRef.current;
+    if (!board) return;
+    dragState.current = { active: false, startX: event.clientX, startY: event.clientY, scrollX: board.scrollLeft, scrollY: board.scrollTop };
+    board.setPointerCapture(event.pointerId);
+    board.classList.add('grabbing');
+  }
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const ds = dragState.current;
+    if (ds.startX === 0 && ds.startY === 0) return;
+    const dx = event.clientX - ds.startX;
+    const dy = event.clientY - ds.startY;
+    if (!ds.active && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) ds.active = true;
+    if (!ds.active) return;
+    const board = boardRef.current;
+    if (board) {
+      board.scrollLeft = ds.scrollX - dx;
+      board.scrollTop = ds.scrollY - dy;
+    }
+  }
+  function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    const board = boardRef.current;
+    if (board) {
+      board.releasePointerCapture(event.pointerId);
+      board.classList.remove('grabbing');
+    }
+    const wasActive = dragState.current.active;
+    // Keep active flag alive so the click handler (which fires after pointer-up) can see it
+    if (wasActive) {
+      requestAnimationFrame(() => {
+        dragState.current = { active: false, startX: 0, startY: 0, scrollX: 0, scrollY: 0 };
+      });
+    } else {
+      dragState.current = { active: false, startX: 0, startY: 0, scrollX: 0, scrollY: 0 };
+    }
+  }
+
   return (
     <>
-      <div className="board-view" onClick={handleBoardClick}>
-        {zones.map(({ zone, items: zoneItems }) => (
+      <div
+        className={`board-view${selectedCardId ? ' focus-active' : ''}`}
+        ref={boardRef}
+        onClick={handleBoardClick}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        {layout.zones.map(({ zone, items: zoneItems }) => (
           <Swimlane
             key={zone}
             zone={zone}
-            zoneItems={zoneItems}
+            items={zoneItems}
             doneIds={doneIds}
             firstActiveId={firstActiveId}
             selectedCardId={selectedCardId}
             selectedDepIds={selectedDepIds}
+            participatingIds={participatingIds}
+            focusCollapsed={focusCollapsed}
+            focusLayout={focusLayout}
             onSelect={handleSelect}
             projectId={projectId}
             bossHandoffs={bossHandoffs}
@@ -1208,8 +1563,9 @@ function BacklogBoard({
             onValidationClick={handleValidationClick}
           />
         ))}
+        <BoardSvgOverlay boardRef={boardRef} items={items} doneIds={doneIds} selectedCardId={selectedCardId} focusCollapsed={focusCollapsed} />
       </div>
-      {overlayItem ? (
+      {overlayItem ? createPortal(
         <div
           className="validation-overlay-backdrop"
           onClick={() => setOverlayItem(null)}
@@ -1262,7 +1618,8 @@ function BacklogBoard({
               ) : null}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
     </>
   );
@@ -1273,6 +1630,7 @@ function BoardCard({
   doneIds,
   isFirstActive,
   highlight,
+  isDimmedCollapsed,
   onSelect,
   isValidated,
   isStale,
@@ -1283,6 +1641,7 @@ function BoardCard({
   doneIds: Set<string>;
   isFirstActive: boolean;
   highlight: CardHighlight;
+  isDimmedCollapsed?: boolean;
   onSelect: (id: string) => void;
   isValidated: boolean;
   isStale: boolean;
@@ -1299,13 +1658,14 @@ function BoardCard({
 
   const deps = parseDeps(item.dependsOn);
   const highlightClass = highlight ? ` highlight-${highlight}` : '';
+  const collapsedClass = isDimmedCollapsed ? ' collapsed' : '';
   const isDone = item.status === 'done';
 
   return (
     <article
       ref={ref}
       data-card-id={item.id}
-      className={`board-card${isDone ? ' done' : ''}${isFirstActive ? ' first-active' : ''}${highlightClass}`}
+      className={`board-card${isDone ? ' done' : ''}${isFirstActive ? ' first-active' : ''}${highlightClass}${collapsedClass}`}
       onClick={() => onSelect(item.id)}
       style={{ cursor: 'pointer' }}
     >
@@ -1317,11 +1677,14 @@ function BoardCard({
       {item.notes ? <p className="board-card-notes">{item.notes}</p> : null}
       {deps.length > 0 ? (
         <div className="board-card-deps">
-          {deps.map((dep) => (
-            <span key={dep} className={`dep-chip${doneIds.has(dep) ? ' met' : ' unmet'}`}>
-              {dep}
-            </span>
-          ))}
+          {deps.map((dep) => {
+            const parentChild = isChildOf(item.id, dep);
+            return (
+              <span key={dep} className={`dep-chip${doneIds.has(dep) ? ' met' : ' unmet'}${parentChild ? ' parent' : ''}`}>
+                {dep}
+              </span>
+            );
+          })}
         </div>
       ) : null}
       {isDone ? (
@@ -1361,65 +1724,55 @@ function parseDeps(dependsOn: string | null): string[] {
     .filter(Boolean);
 }
 
-function topoSortZoneItems(zoneItems: BacklogItem[]): BacklogItem[] {
-  const idSet = new Set(zoneItems.map((item) => item.id));
-  // Build adjacency: depId -> list of item ids that depend on it (within zone)
-  const inDegree = new Map<string, number>();
-  const dependents = new Map<string, string[]>(); // depId -> [itemId, ...]
-  for (const item of zoneItems) {
-    inDegree.set(item.id, 0);
-    dependents.set(item.id, []);
-  }
-  for (const item of zoneItems) {
-    for (const depId of parseDeps(item.dependsOn)) {
-      if (idSet.has(depId)) {
-        inDegree.set(item.id, (inDegree.get(item.id) ?? 0) + 1);
-        dependents.get(depId)!.push(item.id);
-      }
-    }
-  }
-  // Kahn's algorithm
-  const queue: string[] = [];
-  for (const item of zoneItems) {
-    if ((inDegree.get(item.id) ?? 0) === 0) {
-      queue.push(item.id);
-    }
-  }
-  const itemById = new Map(zoneItems.map((item) => [item.id, item]));
-  const sorted: BacklogItem[] = [];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    const item = itemById.get(id);
-    if (item) sorted.push(item);
-    for (const dependentId of (dependents.get(id) ?? [])) {
-      const newDegree = (inDegree.get(dependentId) ?? 0) - 1;
-      inDegree.set(dependentId, newDegree);
-      if (newDegree === 0) {
-        queue.push(dependentId);
-      }
-    }
-  }
-  // If there are cycles, append any remaining items in original order
-  if (sorted.length < zoneItems.length) {
-    const sortedIds = new Set(sorted.map((item) => item.id));
-    for (const item of zoneItems) {
-      if (!sortedIds.has(item.id)) sorted.push(item);
-    }
-  }
-  return sorted;
+/** True if childId is a hierarchical child of parentId (e.g. HX2-052.01 is child of HX2-052) */
+function isChildOf(childId: string, parentId: string): boolean {
+  return childId.startsWith(parentId + '.');
 }
 
-function groupItemsByZone(items: BacklogItem[]): { zone: string; items: BacklogItem[] }[] {
+type BoardLayout = {
+  zones: { zone: string; items: BacklogItem[] }[];
+  zoneOrder: string[];
+};
+
+function computeBoardLayout(items: BacklogItem[]): BoardLayout {
+  // Build a global set of all item IDs and their parsed deps
+  const allIds = new Set(items.map((i) => i.id));
+  const depsOf = new Map<string, string[]>();
+  for (const item of items) {
+    depsOf.set(item.id, parseDeps(item.dependsOn).filter((d) => allIds.has(d)));
+  }
+
+  // Compute topological depth = longest dependency chain (across all zones)
+  const depthOf = new Map<string, number>();
+  const computing = new Set<string>();
+  function getDepth(id: string): number {
+    if (depthOf.has(id)) return depthOf.get(id)!;
+    if (computing.has(id)) return 0; // cycle guard
+    computing.add(id);
+    const deps = depsOf.get(id) ?? [];
+    const depth = deps.length === 0 ? 0 : Math.max(...deps.map((d) => getDepth(d))) + 1;
+    depthOf.set(id, depth);
+    computing.delete(id);
+    return depth;
+  }
+  for (const item of items) getDepth(item.id);
+
+  // Group by zone
   const zoneMap = new Map<string, BacklogItem[]>();
   for (const item of items) {
     const zone = item.ownerZone ?? 'Unzoned';
     if (!zoneMap.has(zone)) zoneMap.set(zone, []);
     zoneMap.get(zone)!.push(item);
   }
-  return Array.from(zoneMap.entries()).map(([zone, zoneItems]) => ({
-    zone,
-    items: topoSortZoneItems(zoneItems)
-  }));
+
+  // Sort each zone by topological depth (stable: ties preserve original order)
+  for (const [, zoneItems] of zoneMap) {
+    zoneItems.sort((a, b) => (depthOf.get(a.id) ?? 0) - (depthOf.get(b.id) ?? 0));
+  }
+
+  const zoneOrder = Array.from(zoneMap.keys());
+  const zones = zoneOrder.map((zone) => ({ zone, items: zoneMap.get(zone)! }));
+  return { zones, zoneOrder };
 }
 
 function LogCard({ entry }: { entry: ProjectLogEntry }) {
