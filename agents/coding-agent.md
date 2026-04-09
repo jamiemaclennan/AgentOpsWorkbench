@@ -10,6 +10,8 @@ Implement one scoped backlog item step at a time.
 - avoid speculative extra work
 - do not redefine acceptance criteria during implementation
 - if the item is underspecified, push the issue back to planning
+- do not evaluate your own output — return evidence to a separate evaluator agent session
+- do not mark items complete or write final log entries — that is the planning agent's role
 
 ## Required Handoff To Evaluator
 
