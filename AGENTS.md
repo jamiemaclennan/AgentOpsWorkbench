@@ -10,6 +10,24 @@ No feature may require simultaneous edits across unrelated zones when a cleaner 
 
 If a task naturally crosses zone boundaries, split it into contract work first and implementation work second.
 
+## Agent Role Rule
+
+No single agent session may act as planner, coder, and evaluator for the same backlog item.
+
+These are three distinct roles defined in `agents/`. Each role must be performed by a separate agent invocation. If you are reading this as a planning agent, you must delegate implementation to a coding agent and evaluation to an evaluator agent — you may not perform those steps yourself in this session.
+
+If you are unsure which role applies to your current invocation, read `agents/loop.md` before proceeding.
+
+## Backlog Gate
+
+A coding agent may not write to any file unless a backlog item ID was provided in the handoff from the planning agent. The item ID must exist in `docs/project/BACKLOG.md` or a child backlog under `docs/project/backlogs/`.
+
+**Exempt from this rule:**
+- `docs/project/BACKLOG.md` and `docs/project/backlogs/*.md` — backlog management is always permitted; this is how new work enters the system
+- `logs/backlog-items/` — log entries are written by the loop, not by coding agents
+
+Guidance, plans, and advice provided to a human operator are not file writes and are not restricted. If a human asks the agent to act on that advice, a backlog item must exist first.
+
 ## Rehydration
 
 Use progressive disclosure when gathering context.
@@ -17,6 +35,7 @@ Use progressive disclosure when gathering context.
 Default reading order:
 - read `README.md`
 - read `docs/project/START_HERE.md`
+- read `agents/loop.md` — required before selecting or executing any backlog item
 - read `docs/project/BACKLOG.md`
 - read the relevant file under `docs/specs/`
 - read deeper implementation details only when the task requires them
