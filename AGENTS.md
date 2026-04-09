@@ -28,6 +28,25 @@ A coding agent may not write to any file unless a backlog item ID was provided i
 
 Guidance, plans, and advice provided to a human operator are not file writes and are not restricted. If a human asks the agent to act on that advice, a backlog item must exist first.
 
+## Bug Handling
+
+Bugs are tracked separately from backlog items so their IDs do not interleave with feature work.
+
+- Bug files live at `docs/project/bugs/<zone>_bugs.md` (e.g. `app-viewer_bugs.md`)
+- Bug IDs use the zone prefix plus a `B` series: `ALV-B001`, `AOW-B001`, etc.
+- Columns match the backlog table except `Depends On` is replaced by `Repro` and `Fix Commit`
+- Agents load only the bug file for the zone they are working in — do not load all bug files
+- The full planner-coder-evaluator loop applies to bug fixes; bugs are not fast-tracked
+- The Backlog Gate applies: a bug item must exist before the fix is written
+
+## Worktree Policy
+
+Worktrees are for zones where parallel code changes could conflict.
+
+Use a worktree for: `app-viewer` implementation, `transport`, `plugin-core`, `tooling`.
+
+Do not use a worktree for: `docs`, backlog files, bug files, or `logs/backlog-items/`. These must be written directly on the working branch so changes are immediately visible to the board viewer and other agents.
+
 ## Rehydration
 
 Use progressive disclosure when gathering context.
@@ -43,6 +62,7 @@ Default reading order:
 Execution scaffold for parallel work:
 - top-level and cross-zone backlog items live in `docs/project/BACKLOG.md`
 - same-zone child backlog items live in `docs/project/backlogs/*.md`
+- zone bug trackers live in `docs/project/bugs/<zone>_bugs.md`
 - staged delivery guidance lives in `docs/project/SDLC.md`
 - planner/coding/evaluator loop guidance lives in `agents/`
 - active multi-agent execution logs belong in `logs/backlog-items/`

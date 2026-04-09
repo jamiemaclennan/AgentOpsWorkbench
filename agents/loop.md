@@ -58,6 +58,15 @@ Evaluator to planner:
 - boss review steps when required
 - signoff instructions written for the BOSS
 
+## Bug Items
+
+Bug items follow the same loop as backlog items. The only differences are:
+- The item ID uses the `<PREFIX>-B<NNN>` format (e.g. `ALV-B001`)
+- The item lives in `docs/project/bugs/<zone>_bugs.md`, not the backlog file
+- The log file is still `logs/backlog-items/<ITEM_ID>.ndjson`
+
+Load only the bug file for the zone you are working in.
+
 ## Logging Rule
 
 The planning agent is the single writer for `logs/backlog-items/<ITEM_ID>.ndjson`.
