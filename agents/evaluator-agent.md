@@ -14,8 +14,6 @@ Evaluate completed work against the backlog item's falsifiable criteria.
 - do not treat an item as fully reported complete unless the signoff instructions are included
 - if multiple items are complete, provide a separate signoff-instructions block for each item
 - do not merge multiple backlog items into one shared review sequence
-- do not write implementation code or modify files — your only output is a structured verdict
-- return your verdict to the planning agent; do not act on it yourself
 
 ## Output Format
 
