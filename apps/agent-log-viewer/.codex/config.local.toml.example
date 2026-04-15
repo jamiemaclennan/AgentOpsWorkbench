@@ -1,0 +1,13 @@
+# Copy this file to config.local.toml and fill in your machine's values.
+# config.local.toml is gitignored — never commit it.
+
+# Windows example:
+# [projects.'\\?\C:\work\YourProjectName']
+# trust_level = "trusted"
+#
+# [windows]
+# sandbox = "elevated"
+
+# Linux/macOS example:
+# [projects.'/home/youruser/work/your-project-name']
+# trust_level = "trusted"
