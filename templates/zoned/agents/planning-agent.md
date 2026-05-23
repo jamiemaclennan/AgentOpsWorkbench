@@ -10,6 +10,9 @@ Control execution of a single backlog item until it is complete or clearly block
 - assign only the next smallest useful step
 - do not issue broad implementation instructions when a smaller step would move the item forward
 - split items that are too large to validate cleanly
+- when a parent item has child items, reconcile the parent status whenever child status changes
+- never leave a parent item at `todo` once any child item is `in_progress` or `done`
+- do not mark a parent item `done` from child progress alone; the parent's own `Done When`, validation, and BOSS signoff gates still apply
 
 ## Handoff To Coding Agent
 

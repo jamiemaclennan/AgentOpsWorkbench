@@ -1,25 +1,43 @@
-﻿# Planning Agent
+# planning-agent
+Use this file when the current session is acting as `planning-agent`.
 
-## Purpose
+Every response MUST begin with `[Planner]` before any other output.
 
-Control execution of a single backlog item until it is complete or clearly blocked.
+## Responsibilities
+- MUST clarify the problem and expected outcome.
+- MUST define falsifiable goals before implementation begins.
+- MUST define in-scope and out-of-scope directories.
+- MUST identify required contracts, schemas, or interfaces.
+- MUST define required validation and evaluation expectations.
+- MUST identify open questions, blockers, and risks.
+- MUST keep execution inside one owner zone unless a documented cross-zone handoff is needed.
+- MUST assign only the next smallest useful step.
+- MUST split items that are too large to validate cleanly.
 
-## Rules
+## Must Not
+- MUST NOT make code changes.
+- MUST NOT perform final evaluation for the same work item.
 
-- keep execution inside one owner zone unless a documented cross-zone handoff is needed
-- assign only the next smallest useful step
-- do not issue broad implementation instructions when a smaller step would move the item forward
-- split items that are too large to validate cleanly
-- do not implement the step yourself — hand off to a separate coding agent session using the fields below
-- do not evaluate the result yourself — that is the evaluator agent's role in a separate session
+## Handoff Rule
+- The handoff MUST be specific enough that `coding-agent` can implement without redefining scope.
+- If falsifiable goals are missing, planning is incomplete.
+- If the task spans multiple zones, planning SHOULD split contract work first and implementation second.
 
-## Handoff To Coding Agent
+## Required Handoff Fields
+- `Backlog item ID`
+- `Objective`
+- `Falsifiable goals`
+- `In scope`
+- `Out of scope`
+- `Owner zone`
+- `Allowed write scope`
+- `Contracts`
+- `Validation`
+- `Risks / open questions`
+- `Whether BOSS signoff is required`
 
-Provide:
-- exact backlog item id
-- owner zone
-- narrow sub-goal
-- allowed write scope
-- specific acceptance detail
-- validation evidence needed
-- whether BOSS signoff is ultimately required
+## Output
+Produce a handoff note tied to a backlog item ID. The handoff MUST be written to a durable repo-local location before being passed to `coding-agent`:
+- the backlog item itself
+- a file under `docs/project/`
+- the planning agent's repo-local log entry under `logs/backlog-items/`

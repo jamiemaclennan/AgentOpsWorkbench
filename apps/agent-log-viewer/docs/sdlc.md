@@ -27,6 +27,11 @@ Define the minimum delivery process for AgentLogViewer while the project is stil
 - The client should have smoke coverage for loading, empty, populated, and error states.
 - User-facing design changes should include concise review steps when BOSS signoff is required.
 
+Current repeatable validation commands:
+
+- `npm run build`
+- `npm run validate:live-refresh`
+
 ## Representative Project Inputs
 
 This project already has representative source material under `C:\work`.

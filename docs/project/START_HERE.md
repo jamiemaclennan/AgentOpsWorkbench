@@ -4,10 +4,12 @@ Read this section first when orienting in Agent Ops Workbench.
 
 ## Default Order
 
-1. `docs/project/BACKLOG.md`
-2. `docs/project/WORKSTREAMS.md`
-3. the relevant spec in `docs/specs/`
-4. `agents/loop.md`
+1. `README.md`
+2. `docs/project/START_HERE.md`
+3. `agents/loop.md`
+4. `docs/project/BACKLOG.md`
+5. `docs/project/WORKSTREAMS.md`
+6. the relevant spec in `docs/specs/`
 
 ## Repo Intent
 

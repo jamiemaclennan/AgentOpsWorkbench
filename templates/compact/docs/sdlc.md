@@ -18,3 +18,4 @@ Establish a predictable delivery path for `[PROJECT_NAME]` that keeps core corre
 - Tests cover new rules or decision logic when applicable
 - Spec and backlog remain accurate
 - Review evidence includes a direct path to inspect or run the result
+- Parent items with child items use rolled-up status semantics instead of drifting independently from child progress

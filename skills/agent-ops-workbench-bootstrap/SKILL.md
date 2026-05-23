@@ -60,6 +60,17 @@ Use only the steps needed for the item, but keep this numbered label format. Do 
 
 An item is not considered fully reported complete unless these boss-facing signoff instructions are included for that specific item.
 
+## Parent/Child Rollup Rule
+
+When a repo uses top-level backlog items plus child items, make the rollup semantics explicit in the local workflow docs instead of leaving them implicit.
+
+- `todo` only when no child item has started
+- `in_progress` when any child item is `in_progress`, or when any child item is `done` but the parent's own `Done When` condition is not yet satisfied
+- `blocked` only when the parent is not done, no child item is actively in progress, and remaining completion is waiting on a real blocker such as an unmet dependency, required signoff, or a newly discovered blocker
+- `done` only when the parent's own `Done When` condition is satisfied, required validation exists, and required BOSS signoff has been obtained when applicable
+
+A parent item must never remain `todo` once any child item is `in_progress` or `done`.
+
 ## Operating Rules
 
 1. Prefer copying from templates over writing framework docs from memory.
@@ -88,7 +99,7 @@ For an existing repo:
 3. if the repo is compact, evaluate whether it should remain compact or move to zoned mode
 4. compare existing files against the matching templates
 5. preserve stronger repo-specific content where it already satisfies the framework intent
-6. patch only the missing framework behaviors, such as planner-owned logging, evidence-first completion, explicit owner-zone handoffs, or item-scoped boss-facing signoff instructions in the required numbered format
+6. patch only the missing framework behaviors, such as planner-owned logging, evidence-first completion, explicit owner-zone handoffs, item-scoped boss-facing signoff instructions in the required numbered format, or explicit parent/child backlog rollup rules
 7. do not delete product-specific docs just because the template layout differs
 8. if the repo is already sufficiently structured, explain the remaining gaps and offer a narrow update plan
 

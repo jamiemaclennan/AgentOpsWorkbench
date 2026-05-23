@@ -33,6 +33,16 @@ Define the owner zones and coordination boundaries for AgentLogViewer.
 - status states
 - layout and styling
 
+### `board-view`
+
+- board layout and swimlane rendering
+- card design and status presentation
+- topological dependency ordering within swimlanes
+- SVG connector line drawing
+- click-to-highlight interaction model
+- validation overlay and fingerprint logic on done cards
+- board error boundary
+
 ### `tooling`
 
 - test strategy

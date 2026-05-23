@@ -1,4 +1,4 @@
-export type BacklogStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'unknown';
+export type BacklogStatus = 'todo' | 'in_progress' | 'blocked' | 'postponed' | 'done' | 'unknown';
 
 export type BacklogItem = {
   id: string;

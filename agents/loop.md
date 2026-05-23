@@ -1,14 +1,17 @@
-﻿# Agent Loop
+# Agent Loop
 
 ## Role Separation Mandate
 
 STOP. Before reading further, confirm which role applies to this invocation:
 
+- If you are the **coordinator**: you may inspect repo state, route role invocations, summarize outcomes, and perform neutral workflow logistics. You must not produce planner handoffs, implement changes, or perform final evaluation for the same work item. See `agents/coordinator.md`.
 - If you are the **planning agent**: you may select a backlog item, identify the next step, and issue a handoff. You must not write implementation code or evaluate results. Delegate to a separate coding agent session.
 - If you are the **coding agent**: you may implement only the step handed to you. You must not select backlog items, define acceptance criteria, or evaluate your own output. Return evidence to a separate evaluator agent session.
 - If you are the **evaluator agent**: you may assess completed work against written criteria. You must not write implementation code or modify the plan. Return your verdict to the planning agent.
 
-A single agent session performing all three roles violates the loop and invalidates the log. If you are uncertain which role applies, stop and request clarification from the operator before proceeding.
+Every response MUST begin with exactly one role marker before any other output: `[Coordinator]`, `[Planner]`, `[Coder]`, or `[Evaluator]`.
+
+A single agent session performing more than one execution role violates the loop and invalidates the log. If you are uncertain which role applies, stop and request clarification from the operator before proceeding.
 
 ## Purpose
 
@@ -28,11 +31,17 @@ Define the standard operating loop between the planning agent, coding agent, and
 
 Planner to coding agent:
 - backlog item id
+- objective
+- falsifiable goals
+- in scope
+- out of scope
 - owner zone
 - sub-step goal
 - allowed write scope
+- contracts
 - targeted acceptance detail
 - required validation evidence
+- risks / open questions
 - whether BOSS signoff is required
 
 Coding to evaluator:
@@ -56,16 +65,7 @@ Evaluator to planner:
 - recommended next planner action
 - repro steps
 - boss review steps when required
-- signoff instructions written for the BOSS
-
-## Bug Items
-
-Bug items follow the same loop as backlog items. The only differences are:
-- The item ID uses the `<PREFIX>-B<NNN>` format (e.g. `ALV-B001`)
-- The item lives in `docs/project/bugs/<zone>_bugs.md`, not the backlog file
-- The log file is still `logs/backlog-items/<ITEM_ID>.ndjson`
-
-Load only the bug file for the zone you are working in.
+- signoff instructions written for the BOSS when the item is complete or ready for BOSS review
 
 ## Logging Rule
 

@@ -52,6 +52,17 @@ Evaluator to planner:
 
 The planning agent is the single writer for `logs/backlog-items/<ITEM_ID>.ndjson`.
 
+## Parent/Child Bookkeeping Rule
+
+When a parent backlog item has child items, the planning agent must keep the parent status rolled up from child status plus the parent's own closure gates.
+
+- `todo` only when no child item has started
+- `in_progress` when any child item is `in_progress`, or when any child item is `done` but the parent's own `Done When` condition is not yet satisfied
+- `blocked` only when the parent is not done, no child item is actively in progress, and remaining completion is waiting on a real blocker such as an unmet dependency, required signoff, or a newly discovered blocker
+- `done` only when the parent's own `Done When` condition is satisfied, required validation exists, and required BOSS signoff has been obtained when applicable
+
+A parent item must never remain `todo` once any child item is `in_progress` or `done`.
+
 ## Completion Rule
 
 A backlog item is complete only when the written `Done When` criteria are satisfied, the required evidence exists, any required BOSS signoff has been obtained, and boss-facing signoff instructions are included for that specific backlog item.

@@ -8,6 +8,7 @@
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
+    "validate:live-refresh": "node scripts/validate-live-refresh.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,14 +1,12 @@
-# Repo-local Codex config template for AgentLogViewer.
-# This project uses custom subagents defined under `.codex/agents/`.
+# Repo-local Codex config — shared across all platforms.
+# Platform-specific overrides (project path, sandbox) go in .codex/config.local.toml
+# which is gitignored. Copy config.local.toml.example to config.local.toml and edit.
 
 personality = "pragmatic"
 model = "gpt-5.4"
 model_reasoning_effort = "medium"
 
 [features]
-
-[projects.'\\?\C:\work\AgentLogViewer']
-trust_level = "trusted"
 
 [agents]
 max_threads = 12
@@ -20,6 +18,3 @@ enabled = true
 
 [plugins."build-web-apps@openai-curated"]
 enabled = true
-
-[windows]
-sandbox = "elevated"

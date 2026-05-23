@@ -486,6 +486,8 @@ function normalizeStatus(value) {
             return 'in_progress';
         case 'blocked':
             return 'blocked';
+        case 'postponed':
+            return 'postponed';
         case 'done':
         case 'complete':
         case 'completed':
@@ -527,7 +529,7 @@ async function parseLogFile(filePath) {
             parsed.push({
                 id: `${filePath}:${index + 1}`,
                 ts: asString(payload.ts),
-                itemId: asString(payload.item),
+                itemId: getLogItemId(payload.item),
                 zone: asString(payload.zone) ??
                     asString(payload.owner_zone) ??
                     asString(payload.ownerZone),
@@ -535,8 +537,8 @@ async function parseLogFile(filePath) {
                 event: asString(payload.event),
                 stepVerdict: asString(payload.step_verdict),
                 itemStatus: asString(payload.item_status) ?? asString(payload.status),
-                summary: asString(payload.summary),
-                nextGap: asString(payload.next_gap),
+                summary: asString(payload.summary) ?? asString(payload.note),
+                nextGap: asString(payload.next_gap) ?? asString(payload.blocked_on),
                 evidenceInstructions: parseEvidenceInstructions(payload.evidence_instructions),
                 raw: line,
                 sourcePath: filePath
@@ -675,6 +677,7 @@ function createEmptyCounts() {
         todo: 0,
         in_progress: 0,
         blocked: 0,
+        postponed: 0,
         done: 0,
         unknown: 0
     };
@@ -694,6 +697,16 @@ function asStringArray(value) {
         .map((entry) => entry.trim())
         .filter(Boolean);
 }
+function getLogItemId(value) {
+    if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+    }
+    if (value && typeof value === 'object') {
+        const payload = value;
+        return asString(payload.id);
+    }
+    return null;
+}
 function parseEvidenceInstructions(value) {
     if (Array.isArray(value)) {
         return {
@@ -706,10 +719,17 @@ function parseEvidenceInstructions(value) {
         return emptyEvidenceInstructions();
     }
     const payload = value;
+    const runThis = asStringArray(payload.run_this);
+    const openThis = [...asStringArray(payload.open_this), ...asStringArray(payload.inspect_this)];
+    const expectThis = [
+        ...asStringArray(payload.expect_this),
+        ...asStringArray(payload.do_this),
+        ...asStringArray(payload.review_sections).map((entry) => `Review section: ${entry}`)
+    ];
     return {
-        runThis: asStringArray(payload.run_this),
-        openThis: asStringArray(payload.open_this),
-        expectThis: asStringArray(payload.expect_this)
+        runThis: uniqueValues(runThis),
+        openThis: uniqueValues(openThis),
+        expectThis: uniqueValues(expectThis)
     };
 }
 function emptyEvidenceInstructions() {
@@ -718,6 +738,9 @@ function emptyEvidenceInstructions() {
         openThis: [],
         expectThis: []
     };
+}
+function uniqueValues(values) {
+    return Array.from(new Set(values));
 }
 function toErrorMessage(error) {
     return error instanceof Error ? error.message : 'Unknown server error.';
